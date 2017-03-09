@@ -1,0 +1,5 @@
+Revision history for Perl extension VideoLAN::LibVLC.
+
+Version 0.01
+	- original version; created by h2xs 1.23 with options
+		-n VideoLAN::LibVLC -b 5.8.1 /usr/include/vlc/libvlc_events.h /usr/include/vlc/libvlc.h /usr/include/vlc/libvlc_media_discoverer.h /usr/include/vlc/libvlc_media.h /usr/include/vlc/libvlc_media_library.h /usr/include/vlc/libvlc_media_list.h /usr/include/vlc/libvlc_media_list_player.h /usr/include/vlc/libvlc_media_player.h /usr/include/vlc/libvlc_structures.h /usr/include/vlc/libvlc_version.h /usr/include/vlc/libvlc_vlm.h
