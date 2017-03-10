@@ -245,10 +245,100 @@ sub new {
 		: croak "Expected hashref, even-length list, or arrayref";
 	$args{argv} ||= [];
 	my $self= VideoLAN::LibVLC::libvlc_new($args{argv});
-	use DDP; p $self;
 	%$self= %args;
+	$self->_update_app_id
+		if defined $self->{app_id} or defined $self->{app_version} or defined $self->{app_icon};
+	$self->_update_user_agent
+		if defined $self->{user_agent_name} or defined $self->{user_agent_http};
 	return $self;
 }
+
+=head1 ATTRIBUTES
+
+=head2 libvlc_version
+
+Version of LibVLC
+
+=head2 libvlc_changeset
+
+Precise revision-control version of LibVLC
+
+=head2 libvlc_compiler
+
+Compiler used to create LibVLC
+
+=cut
+
+
+sub libvlc_version   { libvlc_get_version() }
+sub libvlc_changeset { libvlc_get_changeset() }
+sub libvlc_compiler  { libvlc_get_compiler() }
+
+=head2 app_id
+
+A java-style name identifying the application.  Defaults to an empty string if you set app_version
+or app_icon.
+
+=head2 app_version
+
+The version of your application.  Defaults to empty string if you assign an app_id or app_icon.
+
+=head2 app_icon
+
+The name of the icon for your application.  Defaults to empty string if you assign an app_id or app_version.
+
+=cut
+
+sub _update_app_id {
+	my $self= shift;
+	$self->{app_id}= ''      unless defined $self->{app_id};
+	$self->{app_version}= '' unless defined $self->{app_version};
+	$self->{app_icon}= ''    unless defined $self->{app_icon};
+	$self->libvlc_set_app_id($self->{app_id}, $self->{app_version}, $self->{app_icon});
+}
+sub app_id      { my $self= shift; if (@_) { $self->{app_id}= shift; $self->_update_app_id; } $self->{app_id} }
+sub app_version { my $self= shift; if (@_) { $self->{app_version}= shift; $self->_update_app_id; } $self->{app_version} }
+sub app_icon    { my $self= shift; if (@_) { $self->{app_icon}= shift; $self->_update_app_id; } $self->{app_icon} }
+
+=head2 user_agent_name
+
+A human-facing description of your application as a user agent for web requests.
+
+=head2 user_agent_http
+
+A HTTP UserAgent string for your application.
+
+=cut
+
+sub _update_user_agent {
+	my $self= shift;
+	$self->{user_agent_name}= '' unless defined $self->{user_agent_name};
+	$self->{user_agent_http}= '' unless defined $self->{user_agent_http};
+	$self->libvlc_set_user_agent($self->{user_agent_name}, $self->{user_agent_http});
+}
+sub user_agent_name { my $self= shift; if (@_) { $self->{user_agent_name}= shift; $self->_update_user_agent; } $self->{user_agent_name} }
+sub user_agent_http { my $self= shift; if (@_) { $self->{user_agent_http}= shift; $self->_update_user_agent; } $self->{user_agent_http} }
+
+=head2 audio_filters
+
+An arrayref of all audio filter modules built into LibVLC.
+
+=head2 audio_filter_list
+
+List accessor for audio_filters.
+
+=head2 video_filters
+
+An arrayref of all video filter modules built into LibVLC.
+
+=head2 video_filter_list
+
+List accessor for video_filters.
+
+=cut
+
+sub audio_filters { [ shift->audio_filter_list ] }
+sub video_filters { [ shift->video_filter_list ] }
 
 1;
 __END__
