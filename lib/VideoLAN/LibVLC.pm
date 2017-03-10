@@ -45,8 +45,6 @@ thread)
 =cut
 
 require Exporter;
-use AutoLoader;
-
 our @ISA = qw(Exporter);
 
 our %EXPORT_TAGS= (
@@ -83,60 +81,32 @@ push @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{$_} }
 our @EXPORT_OK= @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{functions} };
 $EXPORT_TAGS{all}= \@EXPORT_OK;
 
-our $AUTOLOAD;
-sub AUTOLOAD {
-	# This AUTOLOAD is used to build constants from the constant() XS function
-	my $constname;
-	($constname = $AUTOLOAD) =~ s/.*:://;
-	croak "&VideoLAN::LibVLC::constant not defined" if $constname eq 'constant';
-	my ($error, $val) = constant($constname);
-	if ($error) { croak $error; }
-	{
-		no strict 'refs';
-		*$AUTOLOAD = sub { $val };
-	}
-	goto &$AUTOLOAD;
-}
-
 require XSLoader;
 XSLoader::load('VideoLAN::LibVLC', $VERSION);
-
-sub new {
-	my $class= shift;
-	my %args= (@_ == 1 && ref($_[0]) eq 'HASH')? %{ $_[0] }
-		: (@_ == 1 && ref($_[0]) eq 'ARRAY')? ( argv => $_[0] )
-		: ((@_&1) == 0)? @_
-		: croak "Expected hashref, even-length list, or arrayref";
-	$args{argv} ||= [];
-	my $self= VideoLAN::LibVLC::libvlc_new($args{argv});
-	%$self= %args;
-	$self->_update_app_id
-		if defined $self->{app_id} or defined $self->{app_version} or defined $self->{app_icon};
-	$self->_update_user_agent
-		if defined $self->{user_agent_name} or defined $self->{user_agent_http};
-	return $self;
-}
 
 =head1 ATTRIBUTES
 
 =head2 libvlc_version
 
-Version of LibVLC
+Version of LibVLC.  This is a package attribute.
 
 =head2 libvlc_changeset
 
-Precise revision-control version of LibVLC
+Precise revision-control version of LibVLC.  This is a package attribute.
 
 =head2 libvlc_compiler
 
-Compiler used to create LibVLC
+Compiler used to create LibVLC.  This is a package attribute.
 
 =cut
-
 
 sub libvlc_version   { libvlc_get_version() }
 sub libvlc_changeset { libvlc_get_changeset() }
 sub libvlc_compiler  { libvlc_get_compiler() }
+
+=head2 argv
+
+A copy of the argv that you passed to the constructor.  Read-only.
 
 =head2 app_id
 
@@ -152,6 +122,8 @@ The version of your application.  Defaults to empty string if you assign an app_
 The name of the icon for your application.  Defaults to empty string if you assign an app_id or app_version.
 
 =cut
+
+sub argv { croak("read-only attribute") if @_ > 1; $_[0]{argv} }
 
 sub _update_app_id {
 	my $self= shift;
@@ -201,8 +173,46 @@ List accessor for video_filters.
 
 =cut
 
-sub audio_filters { [ shift->audio_filter_list ] }
-sub video_filters { [ shift->video_filter_list ] }
+sub audio_filters { my $self= shift; $self->{audio_filters} ||= [ $self->libvlc_audio_filter_list_get ] }
+sub video_filters { my $self= shift; $self->{video_filters} ||= [ $self->libvlc_video_filter_list_get ] }
+
+sub audio_filter_list { @{ shift->audio_filters } }
+sub video_filter_list { @{ shift->video_filters } }
+
+=head1 METHODS
+
+=head2 new
+
+  my $vlc= VideoLAN::VLC->new( \@ARGV );
+  my $vlc= VideoLAN::VLC->new( %attributes );
+  my $vlc= VideoLAN::VLC->new( \%attributes );
+
+Create a new instance of LibVLC (which directly corresponds to an initialization
+of libvlc via C<libvlc_new>)
+
+Note that libvlc suggests against passing command line arguments except for
+debugging, since they can differ by version and by platform.
+
+The returned object is based on a hashref, and the libvlc pointer is magically
+attached.
+
+=cut
+
+sub new {
+	my $class= shift;
+	my %args= (@_ == 1 && ref($_[0]) eq 'HASH')? %{ $_[0] }
+		: (@_ == 1 && ref($_[0]) eq 'ARRAY')? ( argv => $_[0] )
+		: ((@_&1) == 0)? @_
+		: croak "Expected hashref, even-length list, or arrayref";
+	$args{argv} ||= [];
+	my $self= VideoLAN::LibVLC::libvlc_new($args{argv});
+	%$self= %args;
+	$self->_update_app_id
+		if defined $self->{app_id} or defined $self->{app_version} or defined $self->{app_icon};
+	$self->_update_user_agent
+		if defined $self->{user_agent_name} or defined $self->{user_agent_http};
+	return $self;
+}
 
 1;
 __END__

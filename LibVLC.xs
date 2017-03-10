@@ -63,7 +63,7 @@ libvlc_set_user_agent(vlc, name, http)
 	const char *http
 
 void
-audio_filter_list(vlc)
+libvlc_audio_filter_list_get(vlc)
 	libvlc_instance_t *vlc
 	INIT:
 		libvlc_module_description_t *mlist, *mcur;
@@ -80,7 +80,7 @@ audio_filter_list(vlc)
 		libvlc_module_description_list_release(mlist);
 
 void
-video_filter_list(vlc)
+libvlc_video_filter_list_get(vlc)
 	libvlc_instance_t *vlc
 	INIT:
 		libvlc_module_description_t *mlist, *mcur;
