@@ -50,23 +50,32 @@ WriteMakefile(
 	CCFLAGS           => '-Wall',
 	$dep->get_makefile_vars(),
 );
-if (eval {require ExtUtils::Constant; 1} && (open my $fh, "<", "lib/VideoLAN/LibVLC.pm")) {
-	# Copy the generated constants.inc to the fallback/ directory any time the
-	# list of constants changes in LibVLC.pm
-	my @names= map { (my $x= $_) =~ /(libvlc_\w+)/i } <$fh>;
-	ExtUtils::Constant::WriteConstants(
-		NAME         => 'VideoLAN::LibVLC',
-		NAMES        => \@names,
-		DEFAULT_TYPE => 'IV',
-		C_FILE       => 'const-c.inc',
-		XS_FILE      => 'const-xs.inc',
-	);
-}
-else {
-	use File::Copy;
-	use File::Spec;
-	foreach my $file ('const-c.inc', 'const-xs.inc') {
-		my $fallback = File::Spec->catfile('fallback', $file);
-		copy ($fallback, $file) or die "Can't copy $fallback to $file: $!";
-	}
-}
+#if (eval {require ExtUtils::Constant; 1} && (open my $fh, "<", "lib/VideoLAN/LibVLC.pm")) {
+#	# Copy the generated constants.inc to the fallback/ directory any time the
+#	# list of constants changes in LibVLC.pm
+#	my @names;
+#	while (<$fh>) {
+#		if ($_ =~ /_t => \[/) {
+#			while (<$fh>) {
+#				last if $_ =~ /\]/;
+#				next if $_ =~ /^\s*#/;
+#				push @names, map { +{ name => $_, macro => 1, value => "libvlc_$_" } } ($_ =~ /(\S+)/);
+#			}
+#		}
+#	}
+#	ExtUtils::Constant::WriteConstants(
+#		NAME         => 'VideoLAN::LibVLC',
+#		NAMES        => \@names,
+#		DEFAULT_TYPE => 'IV',
+#		C_FILE       => 'const-c.inc',
+#		XS_FILE      => 'const-xs.inc',
+#	);
+#}
+#else {
+#	use File::Copy;
+#	use File::Spec;
+#	foreach my $file ('const-c.inc', 'const-xs.inc') {
+#		my $fallback = File::Spec->catfile('fallback', $file);
+#		copy ($fallback, $file) or die "Can't copy $fallback to $file: $!";
+#	}
+#}

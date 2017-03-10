@@ -50,173 +50,37 @@ use AutoLoader;
 our @ISA = qw(Exporter);
 
 our %EXPORT_TAGS= (
-	constants => [qw(
-		LIBVLC_DEBUG
-		LIBVLC_ERROR
-		LIBVLC_NOTICE
-		LIBVLC_VERSION_EXTRA
-		LIBVLC_VERSION_H
-		LIBVLC_VERSION_INT
-		LIBVLC_VERSION_MAJOR
-		LIBVLC_VERSION_MINOR
-		LIBVLC_VERSION_REVISION
-		LIBVLC_WARNING
-		libvlc_AudioChannel_Dolbys
-		libvlc_AudioChannel_Error
-		libvlc_AudioChannel_Left
-		libvlc_AudioChannel_RStereo
-		libvlc_AudioChannel_Right
-		libvlc_AudioChannel_Stereo
-		libvlc_AudioOutputDevice_2F2R
-		libvlc_AudioOutputDevice_3F2R
-		libvlc_AudioOutputDevice_5_1
-		libvlc_AudioOutputDevice_6_1
-		libvlc_AudioOutputDevice_7_1
-		libvlc_AudioOutputDevice_Error
-		libvlc_AudioOutputDevice_Mono
-		libvlc_AudioOutputDevice_SPDIF
-		libvlc_AudioOutputDevice_Stereo
-		libvlc_Buffering
-		libvlc_Ended
-		libvlc_Error
-		libvlc_MediaDiscovererEnded
-		libvlc_MediaDiscovererStarted
-		libvlc_MediaDurationChanged
-		libvlc_MediaFreed
-		libvlc_MediaListItemAdded
-		libvlc_MediaListItemDeleted
-		libvlc_MediaListPlayerNextItemSet
-		libvlc_MediaListPlayerPlayed
-		libvlc_MediaListPlayerStopped
-		libvlc_MediaListViewItemAdded
-		libvlc_MediaListViewItemDeleted
-		libvlc_MediaListViewWillAddItem
-		libvlc_MediaListViewWillDeleteItem
-		libvlc_MediaListWillAddItem
-		libvlc_MediaListWillDeleteItem
-		libvlc_MediaMetaChanged
-		libvlc_MediaParsedChanged
-		libvlc_MediaPlayerAudioVolume
-		libvlc_MediaPlayerBackward
-		libvlc_MediaPlayerBuffering
-		libvlc_MediaPlayerCorked
-		libvlc_MediaPlayerEncounteredError
-		libvlc_MediaPlayerEndReached
-		libvlc_MediaPlayerForward
-		libvlc_MediaPlayerLengthChanged
-		libvlc_MediaPlayerMediaChanged
-		libvlc_MediaPlayerMuted
-		libvlc_MediaPlayerNothingSpecial
-		libvlc_MediaPlayerOpening
-		libvlc_MediaPlayerPausableChanged
-		libvlc_MediaPlayerPaused
-		libvlc_MediaPlayerPlaying
-		libvlc_MediaPlayerPositionChanged
-		libvlc_MediaPlayerScrambledChanged
-		libvlc_MediaPlayerSeekableChanged
-		libvlc_MediaPlayerSnapshotTaken
-		libvlc_MediaPlayerStopped
-		libvlc_MediaPlayerTimeChanged
-		libvlc_MediaPlayerTitleChanged
-		libvlc_MediaPlayerUncorked
-		libvlc_MediaPlayerUnmuted
-		libvlc_MediaPlayerVout
-		libvlc_MediaStateChanged
-		libvlc_MediaSubItemAdded
-		libvlc_MediaSubItemTreeAdded
-		libvlc_NothingSpecial
-		libvlc_Opening
-		libvlc_Paused
-		libvlc_Playing
-		libvlc_Stopped
-		libvlc_VlmMediaAdded
-		libvlc_VlmMediaChanged
-		libvlc_VlmMediaInstanceStarted
-		libvlc_VlmMediaInstanceStatusEnd
-		libvlc_VlmMediaInstanceStatusError
-		libvlc_VlmMediaInstanceStatusInit
-		libvlc_VlmMediaInstanceStatusOpening
-		libvlc_VlmMediaInstanceStatusPause
-		libvlc_VlmMediaInstanceStatusPlaying
-		libvlc_VlmMediaInstanceStopped
-		libvlc_VlmMediaRemoved
-		libvlc_adjust_Brightness
-		libvlc_adjust_Contrast
-		libvlc_adjust_Enable
-		libvlc_adjust_Gamma
-		libvlc_adjust_Hue
-		libvlc_adjust_Saturation
-		libvlc_logo_delay
-		libvlc_logo_enable
-		libvlc_logo_file
-		libvlc_logo_opacity
-		libvlc_logo_position
-		libvlc_logo_repeat
-		libvlc_logo_x
-		libvlc_logo_y
-		libvlc_marquee_Color
-		libvlc_marquee_Enable
-		libvlc_marquee_Opacity
-		libvlc_marquee_Position
-		libvlc_marquee_Refresh
-		libvlc_marquee_Size
-		libvlc_marquee_Text
-		libvlc_marquee_Timeout
-		libvlc_marquee_X
-		libvlc_marquee_Y
-		libvlc_media_option_trusted
-		libvlc_media_option_unique
-		libvlc_meta_Actors
-		libvlc_meta_Album
-		libvlc_meta_Artist
-		libvlc_meta_ArtworkURL
-		libvlc_meta_Copyright
-		libvlc_meta_Date
-		libvlc_meta_Description
-		libvlc_meta_Director
-		libvlc_meta_EncodedBy
-		libvlc_meta_Episode
-		libvlc_meta_Genre
-		libvlc_meta_Language
-		libvlc_meta_NowPlaying
-		libvlc_meta_Publisher
-		libvlc_meta_Rating
-		libvlc_meta_Season
-		libvlc_meta_Setting
-		libvlc_meta_ShowName
-		libvlc_meta_Title
-		libvlc_meta_TrackID
-		libvlc_meta_TrackNumber
-		libvlc_meta_TrackTotal
-		libvlc_meta_URL
-		libvlc_navigate_activate
-		libvlc_navigate_down
-		libvlc_navigate_left
-		libvlc_navigate_right
-		libvlc_navigate_up
-		libvlc_playback_mode_default
-		libvlc_playback_mode_loop
-		libvlc_playback_mode_repeat
-		libvlc_position_bottom
-		libvlc_position_bottom_left
-		libvlc_position_bottom_right
-		libvlc_position_center
-		libvlc_position_disable
-		libvlc_position_left
-		libvlc_position_right
-		libvlc_position_top
-		libvlc_position_top_left
-		libvlc_position_top_right
-		libvlc_track_audio
-		libvlc_track_text
-		libvlc_track_unknown
-		libvlc_track_video
-	)],
+# BEGIN GENERATED XS CONSTANT LIST
+  media_parse_flag_t => [qw( media_do_interact media_fetch_local
+    media_fetch_network media_parse_local media_parse_network )],
+  media_parsed_status_t => [qw( media_parsed_status_done
+    media_parsed_status_failed media_parsed_status_skipped
+    media_parsed_status_timeout )],
+  media_slave_type_t => [qw( media_slave_type_audio media_slave_type_subtitle
+    )],
+  media_type_t => [qw( media_type_directory media_type_disc media_type_file
+    media_type_playlist media_type_stream media_type_unknown )],
+  meta_t => [qw( meta_Actors meta_Album meta_Artist meta_ArtworkURL
+    meta_Copyright meta_Date meta_Description meta_Director meta_EncodedBy
+    meta_Episode meta_Genre meta_Language meta_NowPlaying meta_Publisher
+    meta_Rating meta_Season meta_Setting meta_ShowName meta_Title meta_TrackID
+    meta_TrackNumber meta_TrackTotal meta_URL )],
+  state_t => [qw( Buffering Ended Error NothingSpecial Opening Paused Playing
+    Stopped )],
+  track_type_t => [qw( track_audio track_text track_unknown track_video )],
+  video_orient_t => [qw( video_orient_bottom_left video_orient_bottom_right
+    video_orient_left_bottom video_orient_left_top video_orient_right_bottom
+    video_orient_right_top video_orient_top_left video_orient_top_right )],
+  video_projection_t => [qw( video_projection_cubemap_layout_standard
+    video_projection_equirectangular video_projection_rectangular )],
+# END GENERATED XS CONSTANT LIST
 	functions => [qw(
 		
 	)],
 );
-our @EXPORT_OK= map { @$_ } values %EXPORT_TAGS;
+push @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{$_} }
+	for grep /_t$/, keys %EXPORT_TAGS;
+our @EXPORT_OK= @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{functions} };
 $EXPORT_TAGS{all}= \@EXPORT_OK;
 
 our $AUTOLOAD;
