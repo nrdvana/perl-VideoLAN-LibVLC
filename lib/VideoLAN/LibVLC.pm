@@ -78,7 +78,7 @@ our %EXPORT_TAGS= (
 );
 push @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{$_} }
 	for grep /_t$/, keys %EXPORT_TAGS;
-our @EXPORT_OK= @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{functions} };
+our @EXPORT_OK= ( @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{functions} } );
 $EXPORT_TAGS{all}= \@EXPORT_OK;
 
 require XSLoader;
@@ -212,6 +212,38 @@ sub new {
 	$self->_update_user_agent
 		if defined $self->{user_agent_name} or defined $self->{user_agent_http};
 	return $self;
+}
+
+=head2 new_media
+
+  my $media= $vlc->new_media( $path );
+  my $media= $vlc->new_media( $uri );
+  my $media= $vlc->new_media( $file_handle );
+  my $media= $vlc->new_media( %attributes );
+  my $media= $vlc->new_media( \%attributes );
+
+This nice heavily-overloaded method helps you quickly open new media
+streams.  VLC can open paths, URIs, or file handles, and if you only
+pass one argument to this method it attempts to decide which of those
+three you intended.
+
+You an instead pass a hash or hashref, and then it just passes them
+along to the Media constructor.
+
+=cut
+
+sub new_media {
+	my $self= shift;
+	my @attrs= (@_ & 1) == 0? @_
+		: (@_ == 1 && !ref($_[0]))? ( ($_[0] =~ m,://,? 'location' : 'path') => $_[0] )
+		: (@_ == 1 && ref($_[0]) eq 'HASH')?        %{ $_[0] }
+		: (@_ == 1 && ref($_[0]) eq 'GLOB')?        ( fh => $_[0] )
+		: (@_ == 1 && ref($_[0])->can('scheme'))?   ( location => $_[0] )
+		: (@_ == 1 && ref($_[0])->can('absolute'))? ( path => $_[0] )
+		: (@_ == 1 && ref($_[0])->can('read'))?     ( fh => $_[0] )
+		: croak "Expected hashref, even-length list, file handle, string, Path::Class, or URI";
+	require VideoLAN::LibVLC::Media;
+	VideoLAN::LibVLC::Media->new(libvlc => $self, @attrs);
 }
 
 1;

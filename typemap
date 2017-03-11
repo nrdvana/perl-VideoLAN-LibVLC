@@ -6,23 +6,29 @@ libvlc_media_player_t *  O_LIBVLC_MEDIA_PLAYER
 INPUT
 O_LIBVLC
     $var = PerlVLC_get_instance_mg($arg);
+    if (!$var) croak(\"argument is not a libvlc instance\");
 
 OUTPUT
 O_LIBVLC
-    $arg = PerlVLC_set_instance_mg(sv_bless(newRV_noinc((SV*)newHV()), gv_stashpv(\"VideoLAN::LibVLC\", GV_ADD)), $var);
+    $arg = $var? PerlVLC_set_instance_mg(sv_bless(newRV_noinc((SV*)newHV()), gv_stashpv(\"VideoLAN::LibVLC\", GV_ADD)), $var)
+               : &PL_sv_undef;
 
 INPUT
 O_LIBVLC_MEDIA
     $var = PerlVLC_get_media_mg($arg);
+    if (!$var) croak(\"argument is not a libvlc_media_t\");
 
 OUTPUT
 O_LIBVLC_MEDIA
-    $arg = PerlVLC_set_media_mg(sv_bless(newRV_noinc((SV*)newHV()), gv_stashpv(\"VideoLAN::LibVLC::Media\", GV_ADD)), $var);
+    $arg = $var? PerlVLC_set_media_mg(sv_bless(newRV_noinc((SV*)newHV()), gv_stashpv(\"VideoLAN::LibVLC::Media\", GV_ADD)), $var)
+               : &PL_sv_undef;
 
 INPUT
 O_LIBVLC_MEDIA_PLAYER
     $var = PerlVLC_get_media_player_mg($arg);
+    if (!$var) croak(\"argument is not a libvlc_media_player_t\");
 
 OUTPUT
-O_LIBVLC_MEDIA
-    $arg = PerlVLC_set_media_player_mg(sv_bless(newRV_noinc((SV*)newHV()), gv_stashpv(\"VideoLAN::LibVLC::MediaPlayer\", GV_ADD)), $var);
+O_LIBVLC_MEDIA_PLAYER
+    $arg = $var? PerlVLC_set_media_player_mg(sv_bless(newRV_noinc((SV*)newHV()), gv_stashpv(\"VideoLAN::LibVLC::MediaPlayer\", GV_ADD)), $var)
+               : &PL_sv_undef;

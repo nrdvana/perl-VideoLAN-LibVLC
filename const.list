@@ -49,12 +49,15 @@ media_slave_type_t
 meta_t
 	i 2.2 --- meta_Actors
 	i --- --- meta_Album
+	i 3.0 --- meta_AlbumArtist
 	i --- --- meta_Artist
 	i --- --- meta_ArtworkURL
 	i --- --- meta_Copyright
 	i --- --- meta_Date
 	i --- --- meta_Description
 	i 2.2 --- meta_Director
+	i 3.0 --- meta_DiscNumber
+	i 3.0 --- meta_DiscTotal
 	i --- --- meta_EncodedBy
 	i 2.2 --- meta_Episode
 	i --- --- meta_Genre

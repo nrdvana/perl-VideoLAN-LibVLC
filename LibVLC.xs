@@ -96,10 +96,100 @@ libvlc_video_filter_list_get(vlc)
 		}
 		libvlc_module_description_list_release(mlist);
 
+libvlc_media_t *
+libvlc_media_new_location(vlc, mrl)
+	libvlc_instance_t *vlc
+	const char *mrl
+
+libvlc_media_t *
+libvlc_media_new_path(vlc, path)
+	libvlc_instance_t *vlc
+	const char *path
+
+libvlc_media_t *
+libvlc_media_new_fd(vlc, fd)
+	libvlc_instance_t *vlc
+	int fd
+
+long
+libvlc_media_get_duration(media)
+	libvlc_media_t *media
+
+char *
+libvlc_media_get_meta(media, field_id)
+	libvlc_media_t *media
+	int field_id
+
+void
+libvlc_media_parse(media)
+	libvlc_media_t *media
+
+int
+libvlc_media_parse_with_options(media, parse_flag, timeout)
+	libvlc_media_t *media
+	int parse_flag
+	int timeout
+
 void
 _const_unavailable()
 	PPCODE:
 		croak("Symbol not available on this version of LibVLC");
+
+MODULE = VideoLAN::LibVLC              PACKAGE = VideoLAN::LibVLC::Media
+
+void
+_build_metadata(media)
+	libvlc_media_t *media
+	INIT:
+		HV *meta;
+		SV *ref;
+		const char* val;
+		struct { int code; const char *name; } *attr, attrlist[]= {
+			{ libvlc_meta_Title       , "Title"       },
+			{ libvlc_meta_Artist      , "Artist"      },
+			{ libvlc_meta_Genre       , "Genre"       },
+			{ libvlc_meta_Copyright   , "Copyright"   },
+			{ libvlc_meta_Album       , "Album"       },
+			{ libvlc_meta_TrackNumber , "TrackNumber" },
+			{ libvlc_meta_Description , "Description" },
+			{ libvlc_meta_Rating      , "Rating"      },
+			{ libvlc_meta_Date        , "Date"        },
+			{ libvlc_meta_Setting     , "Setting"     },
+			{ libvlc_meta_URL         , "URL"         },
+			{ libvlc_meta_Language    , "Language"    },
+			{ libvlc_meta_NowPlaying  , "NowPlaying"  },
+			{ libvlc_meta_Publisher   , "Publisher"   },
+			{ libvlc_meta_EncodedBy   , "EncodedBy"   },
+			{ libvlc_meta_ArtworkURL  , "ArtworkURL"  },
+			{ libvlc_meta_TrackID     , "TrackID"     },
+#if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20200)
+			{ libvlc_meta_TrackTotal  , "TrackTotal"  },
+			{ libvlc_meta_Director    , "Director"    },
+			{ libvlc_meta_Season      , "Season"      },
+			{ libvlc_meta_Episode     , "Episode"     },
+			{ libvlc_meta_ShowName    , "ShowName"    },
+			{ libvlc_meta_Actors      , "Actors"      },
+#endif
+#if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 30000)
+			{ libvlc_meta_AlbumArtist , "AlbumArtist" },
+			{ libvlc_meta_DiscNumber  , "DiscNumber"  },
+			{ libvlc_meta_DiscTotal   , "DiscTotal"   },
+#endif
+			{ 0, NULL }
+		};
+	PPCODE:
+		ref= sv_2mortal(newRV_noinc((SV*) (meta= newHV())));
+		for (attr= attrlist; attr->name; attr++) {
+			val= libvlc_media_get_meta(media, attr->code);
+			if (val) hv_store(meta, attr->name, strlen(attr->name), newSVpv(val, 0), 0);
+		}
+		PUSHs(ref);
+
+void
+DESTROY(media)
+	libvlc_media_t *media
+	PPCODE:
+		libvlc_media_release(media);
 
 BOOT:
 # BEGIN GENERATED BOOT CONSTANTS
