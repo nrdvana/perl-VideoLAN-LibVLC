@@ -124,11 +124,15 @@ void
 libvlc_media_parse(media)
 	libvlc_media_t *media
 
+#if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 30000)
+
 int
 libvlc_media_parse_with_options(media, parse_flag, timeout)
 	libvlc_media_t *media
 	int parse_flag
 	int timeout
+
+#endif
 
 void
 _const_unavailable()

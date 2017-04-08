@@ -63,12 +63,12 @@ meta_t
 	i --- --- meta_Genre
 	i --- --- meta_Language
 	i --- --- meta_NowPlaying
-    i --- --- meta_Publisher
+	i --- --- meta_Publisher
 	i --- --- meta_Rating
 	i 2.2 --- meta_Season
 	i --- --- meta_Setting
 	i 2.2 --- meta_ShowName
-    i --- --- meta_Title
+	i --- --- meta_Title
 	i --- --- meta_TrackID
 	i --- --- meta_TrackNumber
 	i 2.2 --- meta_TrackTotal

@@ -1,12 +1,11 @@
 package VideoLAN::LibVLC;
+
 use 5.008001;
 use strict;
 use warnings;
 use Carp;
 
-our $VERSION = '0.01';
-
-# ABSTRACT - Wrapper for libvlc.so
+# ABSTRACT: Wrapper for libvlc.so
 
 =head1 SYNOPSIS
 
@@ -82,7 +81,7 @@ our @EXPORT_OK= ( @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{functions} } );
 $EXPORT_TAGS{all}= \@EXPORT_OK;
 
 require XSLoader;
-XSLoader::load('VideoLAN::LibVLC', $VERSION);
+XSLoader::load('VideoLAN::LibVLC', $VideoLAN::LibVLC::VERSION);
 
 =head1 ATTRIBUTES
 
@@ -247,4 +246,3 @@ sub new_media {
 }
 
 1;
-__END__
