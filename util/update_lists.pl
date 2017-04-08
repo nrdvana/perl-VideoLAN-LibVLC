@@ -22,11 +22,13 @@ my %xs_ctor= (
             push @constant_sets, [ $_ ];
         } elsif (my ($typ, $min_v, $max_v, $sym)= ($_ =~ /^\s+(\w)\s+(\S+)\s+(\S+)\s+(\w+)/)) {
             die "Unhandled type code $typ" unless $xs_ctor{$typ};
-            push @{$constant_sets[-1]}, $sym;
+            my $name= $sym;
+            $name =~ s/^libvlc_//i;
+            push @{$constant_sets[-1]}, $name;
             $min_v= '' if $min_v eq '---';
             $max_v= '' if $max_v eq '---';
             $per_version{"$min_v $max_v"} ||= { min => $min_v, max => $max_v, list => [] };
-            push @{ $per_version{"$min_v $max_v"}{list} }, { typ => $typ, sym => $sym };
+            push @{ $per_version{"$min_v $max_v"}{list} }, { typ => $typ, sym => $sym, name => $name };
         } else {
             die "parse error: $_\n" if $_ =~ /\S/;
         }
@@ -59,12 +61,12 @@ for (sort { $a->{min} cmp $b->{min} or $a->{max} cmp $b->{max} } values %per_ver
         $xs_boot .= ")\n";
     }
     for my $item (sort @{ $_->{list} }) {
-        $xs_boot .= sprintf('  newCONSTSUB(stash, "%s", '.$xs_ctor{$item->{typ}}.");\n", $item->{sym}, 'libvlc_'.$item->{sym});
+        $xs_boot .= sprintf('  newCONSTSUB(stash, "%s", '.$xs_ctor{$item->{typ}}.");\n", $item->{name}, $item->{sym});
     }
     if (@min || @max) {
         $xs_boot .= "#else\n";
         for my $item (sort @{ $_->{list} }) {
-            $xs_boot .= sprintf("  newXS(\"VideoLAN::LibVLC::%s\", XS_VideoLAN__LibVLC__const_unavailable, file);\n", $item->{sym});
+            $xs_boot .= sprintf("  newXS(\"VideoLAN::LibVLC::%s\", XS_VideoLAN__LibVLC__const_unavailable, file);\n", $item->{name});
         }
         $xs_boot .= "#endif\n";
     }

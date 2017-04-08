@@ -16,4 +16,5 @@ extern void* PerlVLC_get_mg(SV *obj, MGVTBL *mg_vtbl);
 #define PerlVLC_set_media_player_mg(obj, ptr) PerlVLC_set_mg(obj, &PerlVLC_media_player_mg_vtbl, (void*) ptr)
 #define PerlVLC_get_media_player_mg(obj)      ((libvlc_media_player_t*) PerlVLC_get_mg(obj, &PerlVLC_media_player_mg_vtbl))
 
-extern void PerlVLC_enable_logging(libvlc_instance_t *vlc, int fd, libvlc_log_level lev, int with_context, int with_object);
+extern void PerlVLC_enable_logging(libvlc_instance_t *vlc, int fd, int lev, bool with_context, bool with_object);
+extern void PerlVLC_log_extract_attrs(SV *buffer, HV *attrs);

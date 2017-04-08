@@ -6,6 +6,7 @@
 #include "ppport.h"
 
 #include <vlc/vlc.h>
+#include <vlc/libvlc_version.h>
 
 #include "PerlVLC.h"
 
@@ -95,6 +96,34 @@ libvlc_video_filter_list_get(vlc)
 			PUSHs(newRV_noinc((SV*)elem));
 		}
 		libvlc_module_description_list_release(mlist);
+
+#if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20100)
+
+void
+_enable_logging(vlc, fd, lev, with_context, with_object)
+	libvlc_instance_t *vlc
+	int fd
+	int lev
+	bool with_context
+	bool with_object
+	PPCODE:
+		PerlVLC_enable_logging(vlc, fd, lev, with_context, with_object);
+
+void
+_log_extract_attrs(buf)
+	SV *buf
+	INIT:
+		HV *attrs;
+	PPCODE:
+		attrs= newHV();
+		PUSHs(newRV_noinc((SV*)attrs));
+		PerlVLC_log_extract_attrs(buf, attrs);
+
+void
+libvlc_log_unset(vlc)
+	libvlc_instance_t *vlc
+
+#endif
 
 libvlc_media_t *
 libvlc_media_new_location(vlc, mrl)
@@ -200,12 +229,12 @@ BOOT:
   HV* stash= gv_stashpv("VideoLAN::LibVLC", GV_ADD);
   newCONSTSUB(stash, "Paused", newSViv(libvlc_Paused));
   newCONSTSUB(stash, "Playing", newSViv(libvlc_Playing));
-  newCONSTSUB(stash, "Buffering", newSViv(libvlc_Buffering));
   newCONSTSUB(stash, "Stopped", newSViv(libvlc_Stopped));
-  newCONSTSUB(stash, "Error", newSViv(libvlc_Error));
-  newCONSTSUB(stash, "Opening", newSViv(libvlc_Opening));
+  newCONSTSUB(stash, "Buffering", newSViv(libvlc_Buffering));
   newCONSTSUB(stash, "Ended", newSViv(libvlc_Ended));
+  newCONSTSUB(stash, "Opening", newSViv(libvlc_Opening));
   newCONSTSUB(stash, "NothingSpecial", newSViv(libvlc_NothingSpecial));
+  newCONSTSUB(stash, "Error", newSViv(libvlc_Error));
   newCONSTSUB(stash, "track_audio", newSViv(libvlc_track_audio));
   newCONSTSUB(stash, "track_text", newSViv(libvlc_track_text));
   newCONSTSUB(stash, "track_unknown", newSViv(libvlc_track_unknown));
@@ -227,6 +256,17 @@ BOOT:
   newCONSTSUB(stash, "meta_TrackID", newSViv(libvlc_meta_TrackID));
   newCONSTSUB(stash, "meta_TrackNumber", newSViv(libvlc_meta_TrackNumber));
   newCONSTSUB(stash, "meta_URL", newSViv(libvlc_meta_URL));
+#if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20100)
+  newCONSTSUB(stash, "DEBUG", newSViv(LIBVLC_DEBUG));
+  newCONSTSUB(stash, "NOTICE", newSViv(LIBVLC_NOTICE));
+  newCONSTSUB(stash, "WARNING", newSViv(LIBVLC_WARNING));
+  newCONSTSUB(stash, "ERROR", newSViv(LIBVLC_ERROR));
+#else
+  newXS("VideoLAN::LibVLC::DEBUG", XS_VideoLAN__LibVLC__const_unavailable, file);
+  newXS("VideoLAN::LibVLC::NOTICE", XS_VideoLAN__LibVLC__const_unavailable, file);
+  newXS("VideoLAN::LibVLC::WARNING", XS_VideoLAN__LibVLC__const_unavailable, file);
+  newXS("VideoLAN::LibVLC::ERROR", XS_VideoLAN__LibVLC__const_unavailable, file);
+#endif
 #if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20200)
   newCONSTSUB(stash, "meta_Actors", newSViv(libvlc_meta_Actors));
   newCONSTSUB(stash, "meta_Director", newSViv(libvlc_meta_Director));
@@ -271,6 +311,9 @@ BOOT:
   newCONSTSUB(stash, "media_parsed_status_done", newSViv(libvlc_media_parsed_status_done));
   newCONSTSUB(stash, "media_slave_type_subtitle", newSViv(libvlc_media_slave_type_subtitle));
   newCONSTSUB(stash, "media_slave_type_audio", newSViv(libvlc_media_slave_type_audio));
+  newCONSTSUB(stash, "meta_AlbumArtist", newSViv(libvlc_meta_AlbumArtist));
+  newCONSTSUB(stash, "meta_DiscNumber", newSViv(libvlc_meta_DiscNumber));
+  newCONSTSUB(stash, "meta_DiscTotal", newSViv(libvlc_meta_DiscTotal));
 #else
   newXS("VideoLAN::LibVLC::video_orient_top_left", XS_VideoLAN__LibVLC__const_unavailable, file);
   newXS("VideoLAN::LibVLC::video_orient_top_right", XS_VideoLAN__LibVLC__const_unavailable, file);
@@ -300,6 +343,9 @@ BOOT:
   newXS("VideoLAN::LibVLC::media_parsed_status_done", XS_VideoLAN__LibVLC__const_unavailable, file);
   newXS("VideoLAN::LibVLC::media_slave_type_subtitle", XS_VideoLAN__LibVLC__const_unavailable, file);
   newXS("VideoLAN::LibVLC::media_slave_type_audio", XS_VideoLAN__LibVLC__const_unavailable, file);
+  newXS("VideoLAN::LibVLC::meta_AlbumArtist", XS_VideoLAN__LibVLC__const_unavailable, file);
+  newXS("VideoLAN::LibVLC::meta_DiscNumber", XS_VideoLAN__LibVLC__const_unavailable, file);
+  newXS("VideoLAN::LibVLC::meta_DiscTotal", XS_VideoLAN__LibVLC__const_unavailable, file);
 #endif
 # END GENERATED BOOT CONSTANTS
 #
