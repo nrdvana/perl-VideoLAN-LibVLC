@@ -16,14 +16,20 @@ my %xs_ctor= (
 
 {
     open my $consts_fh, "<", "$FindBin::Bin/../const.list" or die;
+    my $enum= undef;
     while (<$consts_fh>) {
         chomp;
         if ($_ =~ /^\w/) {
             push @constant_sets, [ $_ ];
+            $enum= $_;
         } elsif (my ($typ, $min_v, $max_v, $sym)= ($_ =~ /^\s+(\w)\s+(\S+)\s+(\S+)\s+(\w+)/)) {
             die "Unhandled type code $typ" unless $xs_ctor{$typ};
-            my $name= $sym;
-            $name =~ s/^libvlc_//i;
+            my $name= uc($sym);
+            $name =~ s/^LIBVLC_//;
+            # If the first word of the enum is not the first word of the constant,
+            # prefix the constant with the name of the enum, minus _t
+            $name = do { my $x= $enum; $x =~ s/_t$//; uc($x) } . '_' . $name
+                unless uc((split /_/, $name)[0]) eq uc((split /_/, $enum)[0]);
             push @{$constant_sets[-1]}, $name;
             $min_v= '' if $min_v eq '---';
             $max_v= '' if $max_v eq '---';

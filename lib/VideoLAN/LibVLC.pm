@@ -51,30 +51,34 @@ our @ISA = qw(Exporter);
 
 our %EXPORT_TAGS= (
 # BEGIN GENERATED XS CONSTANT LIST
-  log_level_t => [qw( DEBUG ERROR NOTICE WARNING )],
-  media_parse_flag_t => [qw( media_do_interact media_fetch_local
-    media_fetch_network media_parse_local media_parse_network )],
-  media_parsed_status_t => [qw( media_parsed_status_done
-    media_parsed_status_failed media_parsed_status_skipped
-    media_parsed_status_timeout )],
-  media_slave_type_t => [qw( media_slave_type_audio media_slave_type_subtitle
+  log_level_t => [qw( LOG_LEVEL_DEBUG LOG_LEVEL_ERROR LOG_LEVEL_NOTICE
+    LOG_LEVEL_WARNING )],
+  media_parse_flag_t => [qw( MEDIA_DO_INTERACT MEDIA_FETCH_LOCAL
+    MEDIA_FETCH_NETWORK MEDIA_PARSE_LOCAL MEDIA_PARSE_NETWORK )],
+  media_parsed_status_t => [qw( MEDIA_PARSED_STATUS_DONE
+    MEDIA_PARSED_STATUS_FAILED MEDIA_PARSED_STATUS_SKIPPED
+    MEDIA_PARSED_STATUS_TIMEOUT )],
+  media_slave_type_t => [qw( MEDIA_SLAVE_TYPE_AUDIO MEDIA_SLAVE_TYPE_SUBTITLE
     )],
-  media_type_t => [qw( media_type_directory media_type_disc media_type_file
-    media_type_playlist media_type_stream media_type_unknown )],
-  meta_t => [qw( meta_Actors meta_Album meta_AlbumArtist meta_Artist
-    meta_ArtworkURL meta_Copyright meta_Date meta_Description meta_Director
-    meta_DiscNumber meta_DiscTotal meta_EncodedBy meta_Episode meta_Genre
-    meta_Language meta_NowPlaying meta_Publisher meta_Rating meta_Season
-    meta_Setting meta_ShowName meta_Title meta_TrackID meta_TrackNumber
-    meta_TrackTotal meta_URL )],
-  state_t => [qw( Buffering Ended Error NothingSpecial Opening Paused Playing
-    Stopped )],
-  track_type_t => [qw( track_audio track_text track_unknown track_video )],
-  video_orient_t => [qw( video_orient_bottom_left video_orient_bottom_right
-    video_orient_left_bottom video_orient_left_top video_orient_right_bottom
-    video_orient_right_top video_orient_top_left video_orient_top_right )],
-  video_projection_t => [qw( video_projection_cubemap_layout_standard
-    video_projection_equirectangular video_projection_rectangular )],
+  media_type_t => [qw( MEDIA_TYPE_DIRECTORY MEDIA_TYPE_DISC MEDIA_TYPE_FILE
+    MEDIA_TYPE_PLAYLIST MEDIA_TYPE_STREAM MEDIA_TYPE_UNKNOWN )],
+  meta_t => [qw( META_ACTORS META_ALBUM META_ALBUMARTIST META_ARTIST
+    META_ARTWORKURL META_COPYRIGHT META_DATE META_DESCRIPTION META_DIRECTOR
+    META_DISCNUMBER META_DISCTOTAL META_ENCODEDBY META_EPISODE META_GENRE
+    META_LANGUAGE META_NOWPLAYING META_PUBLISHER META_RATING META_SEASON
+    META_SETTING META_SHOWNAME META_TITLE META_TRACKID META_TRACKNUMBER
+    META_TRACKTOTAL META_URL )],
+  position_t => [qw( POSITION_BOTTOM POSITION_BOTTOM_LEFT POSITION_BOTTOM_RIGHT
+    POSITION_CENTER POSITION_DISABLE POSITION_LEFT POSITION_RIGHT POSITION_TOP
+    POSITION_TOP_LEFT POSITION_TOP_RIGHT )],
+  state_t => [qw( STATE_BUFFERING STATE_ENDED STATE_ERROR STATE_NOTHINGSPECIAL
+    STATE_OPENING STATE_PAUSED STATE_PLAYING STATE_STOPPED )],
+  track_type_t => [qw( TRACK_AUDIO TRACK_TEXT TRACK_UNKNOWN TRACK_VIDEO )],
+  video_orient_t => [qw( VIDEO_ORIENT_BOTTOM_LEFT VIDEO_ORIENT_BOTTOM_RIGHT
+    VIDEO_ORIENT_LEFT_BOTTOM VIDEO_ORIENT_LEFT_TOP VIDEO_ORIENT_RIGHT_BOTTOM
+    VIDEO_ORIENT_RIGHT_TOP VIDEO_ORIENT_TOP_LEFT VIDEO_ORIENT_TOP_RIGHT )],
+  video_projection_t => [qw( VIDEO_PROJECTION_CUBEMAP_LAYOUT_STANDARD
+    VIDEO_PROJECTION_EQUIRECTANGULAR VIDEO_PROJECTION_RECTANGULAR )],
 # END GENERATED XS CONSTANT LIST
 	functions => [qw(
 		
@@ -87,6 +91,52 @@ $EXPORT_TAGS{all}= \@EXPORT_OK;
 
 require XSLoader;
 XSLoader::load('VideoLAN::LibVLC', $VideoLAN::LibVLC::VERSION);
+
+=head1 CONSTANTS
+
+This module can export constants used by LibVLC, however I renamed them a bit
+because libvlc uses a mix of uppercase/lowercase/camel-case that is
+distracting and confusing when used as perl const-subs, the LIBVLC_ prefix is
+annoying for perl scripts, and some constants only differ by case.
+
+The renaming rules are:
+
+=over
+
+=item *
+
+Remove any "LIBVLC_" or "libvlc_" prefix
+
+=item *
+
+If the constant does not begin with the same word as the enum it belongs to,
+add the enum's name to the beginning of the constant
+
+=item *
+
+Uppercase everything
+
+=back
+
+for example:
+
+  LIBVLC_ERROR      =>   LOG_LEVEL_ERROR
+  libvlc_Error      =>   STATE_ERROR
+  libvlc_meta_Album =>   META_ALBUM
+
+Each of LibVLC's enums can be exported individually:
+
+  use VideoLAN::LibVLC qw( :log_level_t :media_parse_flag_t :media_parsed_status_t
+   :media_slave_type_t :media_type_t :position_t :state_t :track_type_t
+   :video_orient_t :video_projection_t );
+
+Or get all of them with C<:constants>.
+
+However, be aware that the constants change significantly across libvlc
+versions, but this module always exports all of them.  Accessing a constant
+not supported by your version of libvlc will throw an exception.
+(I figured it would be better to allow the exceptions at runtime than for
+ programs to break at compile time due to the host's version of libvlc.)
 
 =head1 ATTRIBUTES
 
@@ -104,6 +154,7 @@ Compiler used to create LibVLC.  This is a package attribute.
 
 =cut
 
+# wrap with method in order to ignore arguments
 sub libvlc_version   { libvlc_get_version() }
 sub libvlc_changeset { libvlc_get_changeset() }
 sub libvlc_compiler  { libvlc_get_compiler() }
@@ -239,10 +290,10 @@ sub _set_logger {
 		$self->{log}= sub {
 			my ($level, $msg, $attr)= @_;
 			$msg= join(' ', $msg, map { "$_=$attr->{$_}" } keys %$attr);
-			if ($level == DEBUG()) { $target->debug($msg); }
-			elsif ($level == NOTICE()) { $target->notice($msg); }
-			elsif ($level == WARNING()) { $target->warn($msg); }
-			elsif ($level >= ERROR()) { $target->error($msg); }
+			if ($level == LOG_LEVEL_DEBUG()) { $target->debug($msg); }
+			elsif ($level == LOG_LEVEL_NOTICE()) { $target->notice($msg); }
+			elsif ($level == LOG_LEVEL_WARNING()) { $target->warn($msg); }
+			elsif ($level >= LOG_LEVEL_ERROR()) { $target->error($msg); }
 			else { $target->warn($msg); } # in case of future log levels
 		};
 	}
@@ -250,7 +301,7 @@ sub _set_logger {
 		croak "Don't know how to log to $target";
 	}
 	my $lev= $options? $options->{level} : undef;
-	$lev= NOTICE() unless defined $lev;
+	$lev= LOG_LEVEL_NOTICE() unless defined $lev;
 	# Install callback to file handle at the C level
 	$self->_enable_logging(fileno($self->_callback_fh_w), $lev, $options->{context}, $options->{object});
 	# Register the handler for the activity on the file handle.  Might be redundant, but doesn't hurt.

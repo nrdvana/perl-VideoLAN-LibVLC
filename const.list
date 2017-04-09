@@ -78,3 +78,14 @@ log_level_t
 	i 2.1 --- LIBVLC_NOTICE
 	i 2.1 --- LIBVLC_WARNING
 	i 2.1 --- LIBVLC_ERROR
+position_t
+	i 2.2 --- libvlc_position_disable
+	i 2.2 --- libvlc_position_center
+	i 2.2 --- libvlc_position_left
+	i 2.2 --- libvlc_position_right
+	i 2.2 --- libvlc_position_top
+	i 2.2 --- libvlc_position_top_left
+	i 2.2 --- libvlc_position_top_right
+	i 2.2 --- libvlc_position_bottom
+	i 2.2 --- libvlc_position_bottom_left
+	i 2.2 --- libvlc_position_bottom_right
