@@ -163,6 +163,131 @@ libvlc_media_parse_with_options(media, parse_flag, timeout)
 
 #endif
 
+libvlc_media_player_t*
+libvlc_media_player_new(vlc)
+	libvlc_instance_t *vlc
+
+libvlc_media_player_t*
+libvlc_media_player_new_from_media(media)
+	libvlc_media_t *media
+
+void
+libvlc_media_player_set_media(player, media)
+	libvlc_media_player_t *player
+	libvlc_media_t *media
+
+int
+libvlc_media_player_will_play(player)
+	libvlc_media_player_t *player
+
+int
+libvlc_media_player_is_playing(player)
+	libvlc_media_player_t *player
+
+int
+libvlc_media_player_is_seekable(player)
+	libvlc_media_player_t *player
+
+int
+libvlc_media_player_can_pause(player)
+	libvlc_media_player_t *player
+
+int
+libvlc_media_player_play(player)
+	libvlc_media_player_t *player
+
+void
+libvlc_media_player_pause(player)
+	libvlc_media_player_t *player
+
+#if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 10101)
+
+void
+libvlc_media_player_set_pause(player, do_pause)
+	libvlc_media_player_t *player
+	bool do_pause
+
+#endif
+
+void
+libvlc_media_player_stop(player)
+	libvlc_media_player_t *player
+
+float
+libvlc_media_player_get_rate(player)
+	libvlc_media_player_t *player
+
+int
+libvlc_media_player_set_rate(player, rate)
+	libvlc_media_player_t *player
+	float rate
+
+libvlc_time_t
+libvlc_media_player_get_length(player)
+	libvlc_media_player_t *player
+
+libvlc_time_t
+libvlc_media_player_get_time(player)
+	libvlc_media_player_t *player
+
+void
+libvlc_media_player_set_time(player, i_time)
+	libvlc_media_player_t *player
+	libvlc_time_t i_time
+
+float
+libvlc_media_player_get_position(player)
+	libvlc_media_player_t *player
+
+void
+libvlc_media_player_set_position(player, pos)
+	libvlc_media_player_t *player
+	float pos
+
+int
+libvlc_media_player_get_chapter_count(player)
+	libvlc_media_player_t *player
+
+int
+libvlc_media_player_get_chapter(player)
+	libvlc_media_player_t *player
+
+void
+libvlc_media_player_set_chapter(player, chapter)
+	libvlc_media_player_t *player
+	int chapter
+
+void
+libvlc_media_player_next_chapter(player)
+	libvlc_media_player_t *player
+
+void
+libvlc_media_player_previous_chapter(player)
+	libvlc_media_player_t *player
+
+int
+libvlc_media_player_get_title_count(player)
+	libvlc_media_player_t *player
+
+int
+libvlc_media_player_get_title(player)
+	libvlc_media_player_t *player
+
+void
+libvlc_media_player_set_title(player, title)
+	libvlc_media_player_t *player
+	int title
+
+#if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20100)
+
+void
+libvlc_media_player_set_video_title_display(player, position, timeout)
+	libvlc_media_player_t *player
+	libvlc_position_t position
+	unsigned int timeout
+
+#endif
+
 void
 _const_unavailable()
 	PPCODE:

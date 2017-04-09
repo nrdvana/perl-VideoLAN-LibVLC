@@ -3,6 +3,8 @@ libvlc_instance_t *      O_LIBVLC
 libvlc_media_t *         O_LIBVLC_MEDIA
 libvlc_media_player_t *  O_LIBVLC_MEDIA_PLAYER
 libvlc_log_level         T_INT
+libvlc_time_t            T_INT
+libvlc_position_t        T_INT
 
 INPUT
 O_LIBVLC

@@ -384,9 +384,25 @@ sub new_media {
 	VideoLAN::LibVLC::Media->new(libvlc => $self, @attrs);
 }
 
+=head2 new_media_player
+
+  my $player= $vlc->new_media_player();
+
+=cut
+
+sub new_media_player {
+	my $self= shift;
+	my @attrs= (@_ & 1) == 0? @_
+		: (@_ == 1 && ref($_[0]) eq 'HASH')?   %{ $_[0] }
+		: croak "Expected hashref or even-length list";
+	require VideoLAN::LibVLC::MediaPlayer;
+	VideoLAN::LibVLC::MediaPlayer->new(libvlc => $self, @attrs);
+}
+
 =head2 callback_dispatch
 
 Read any pending callback messages from the pipe(s), and execute the callback.
+
 The "wire format" used to stream the callbacks is deliberately hidden within
 this module, and might change drastically in future versions.  The provided
 API is to either call L</wait_callback> or perform your own wait on the file
