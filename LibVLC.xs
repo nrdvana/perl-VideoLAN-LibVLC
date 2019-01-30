@@ -163,13 +163,17 @@ libvlc_media_parse_with_options(media, parse_flag, timeout)
 
 #endif
 
-libvlc_media_player_t*
+void
 libvlc_media_player_new(vlc)
 	libvlc_instance_t *vlc
+	PPCODE:
+		PUSHs( PerlVLC_wrap_media_player(libvlc_media_player_new(vlc)) );
 
-libvlc_media_player_t*
+void
 libvlc_media_player_new_from_media(media)
 	libvlc_media_t *media
+	PPCODE:
+		PUSHs( PerlVLC_wrap_media_player(libvlc_media_player_new_from_media(media)) );
 
 void
 libvlc_media_player_set_media(player, media)
@@ -352,10 +356,9 @@ DESTROY(media)
 MODULE = VideoLAN::LibVLC              PACKAGE = VideoLAN::LibVLC::MediaPlayer
 
 void
-DESTROY(player)
-	libvlc_media_player_t *player
+DESTROY(SV *player)
 	PPCODE:
-		libvlc_media_player_release(player);
+		PerlVLC_free_media_player(player);
 
 BOOT:
 # BEGIN GENERATED BOOT CONSTANTS

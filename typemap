@@ -28,10 +28,5 @@ O_LIBVLC_MEDIA
 
 INPUT
 O_LIBVLC_MEDIA_PLAYER
-    $var = PerlVLC_get_media_player_mg($arg);
+    $var = PerlVLC_get_media_player_mg($arg)->player;
     if (!$var) croak(\"argument is not a libvlc_media_player_t\");
-
-OUTPUT
-O_LIBVLC_MEDIA_PLAYER
-    $arg = $var? PerlVLC_set_media_player_mg(sv_bless(newRV_noinc((SV*)newHV()), gv_stashpv(\"VideoLAN::LibVLC::MediaPlayer\", GV_ADD)), $var)
-               : &PL_sv_undef;
