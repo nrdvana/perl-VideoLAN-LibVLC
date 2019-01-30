@@ -17,7 +17,6 @@ libvlc_new(args)
 	AV* args
 	INIT:
 		int argc, i;
-		size_t len;
 		SV **ep;
 		const char **argv;
 	CODE:
@@ -26,7 +25,7 @@ libvlc_new(args)
 		if (!argv) croak("alloca failed");
 		for (i= 0; i < argc; i++) {
 			ep= av_fetch(args, i, 0);
-			argv[i]= (ep && *ep)? SvPV(*ep, len) : "";
+			argv[i]= (ep && *ep && SvOK(*ep))? SvPV_nolen(*ep) : "";
 		}
 		argv[argc]= NULL;
 		RETVAL= libvlc_new(argc, argv);
@@ -34,12 +33,6 @@ libvlc_new(args)
 			croak("libvlc_new failed");
 	OUTPUT:
 		RETVAL
-
-void
-DESTROY(vlc)
-	libvlc_instance_t *vlc
-	CODE:
-		libvlc_release(vlc);
 
 const char*
 libvlc_get_changeset()
@@ -347,18 +340,7 @@ _build_metadata(media)
 		}
 		PUSHs(ref);
 
-void
-DESTROY(media)
-	libvlc_media_t *media
-	PPCODE:
-		libvlc_media_release(media);
-
 MODULE = VideoLAN::LibVLC              PACKAGE = VideoLAN::LibVLC::MediaPlayer
-
-void
-DESTROY(SV *player)
-	PPCODE:
-		PerlVLC_free_media_player(player);
 
 BOOT:
 # BEGIN GENERATED BOOT CONSTANTS
