@@ -90,27 +90,33 @@ libvlc_video_filter_list_get(vlc)
 		}
 		libvlc_module_description_list_release(mlist);
 
+SV *
+_decode_next_event(vlc)
+	PerlVLC_vlc_t *vlc
+	INIT:
+		int len;
+	CODE:
+		if (vlc->event_pipe[0] < 0)
+			PerlVLC_vlc_init_event_pipe(vlc);
+		if (!PerlVLC_recv_message(vlc->event_pipe[0], vlc->event_recv_buf, sizeof(vlc->event_recv_buf), &vlc->event_recv_bufpos))
+			RETVAL= &PL_sv_undef;
+		else {
+			RETVAL= PerlVLC_inflate_message((PerlVLC_Message_t *) vlc->event_recv_buf);
+			PerlVLC_shift_message(vlc->event_recv_buf, sizeof(vlc->event_recv_buf), &vlc->event_recv_bufpos);
+		}
+	OUTPUT:
+		RETVAL
+
 #if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20100)
 
 void
-_enable_logging(vlc, fd, lev, with_context, with_object)
-	libvlc_instance_t *vlc
-	int fd
+_enable_logging(vlc, lev, with_context, with_object)
+	PerlVLC_vlc_t *vlc
 	int lev
 	bool with_context
 	bool with_object
 	PPCODE:
-		PerlVLC_enable_logging(vlc, fd, lev, with_context, with_object);
-
-void
-_log_extract_attrs(buf)
-	SV *buf
-	INIT:
-		HV *attrs;
-	PPCODE:
-		attrs= newHV();
-		PUSHs(newRV_noinc((SV*)attrs));
-		PerlVLC_log_extract_attrs(buf, attrs);
+		# TODO
 
 void
 libvlc_log_unset(vlc)
@@ -341,6 +347,82 @@ _build_metadata(media)
 		PUSHs(ref);
 
 MODULE = VideoLAN::LibVLC              PACKAGE = VideoLAN::LibVLC::MediaPlayer
+
+MODULE = VideoLAN::LibVLC              PACKAGE = VideoLAN::LibVLC::Picture
+
+PerlVLC_picture_t *
+new(classname, args)
+	SV *classname
+	SV *args
+	CODE:
+		RETVAL= PerlVLC_picture_new_from_hash(args);
+	OUTPUT:
+		RETVAL
+
+int
+id(pic)
+	PerlVLC_picture_t *pic;
+	CODE:
+		RETVAL= pic->id;
+	OUTPUT:
+		RETVAL
+
+SV *
+chroma(pic)
+	PerlVLC_picture_t *pic;
+	CODE:
+		RETVAL= newSVpvn(pic->chroma, 4);
+	OUTPUT:
+		RETVAL
+
+int
+width(pic)
+	PerlVLC_picture_t *pic;
+	CODE:
+		RETVAL= pic->width;
+	OUTPUT:
+		RETVAL
+
+int
+height(pic)
+	PerlVLC_picture_t *pic;
+	CODE:
+		RETVAL= pic->height;
+	OUTPUT:
+		RETVAL
+
+SV *
+plane(pic, idx)
+	PerlVLC_picture_t *pic;
+	int idx;
+	CODE:
+		if (pic->held_by_vlc)
+			croak("Can't access planes while Picture object is held by VLC decoder thread");
+		RETVAL= (idx < 0 || idx > 3 || !pic->plane[idx])? &PL_sv_undef
+			: pic->plane_buffer_sv[idx]? newSVsv(pic->plane_buffer_sv[idx])
+			: newRV_noinc(buffer_scalar_wrap(newSV(0), pic->plane[idx], pic->pitch[idx] * pic->lines[idx], 0, NULL, NULL));
+	OUTPUT:
+		RETVAL
+
+SV *
+plane_pitch(pic, idx)
+	PerlVLC_picture_t *pic;
+	int idx;
+	CODE:
+		RETVAL= (idx < 0 || idx > 3 || !pic->plane[idx])? &PL_sv_undef
+			: newSViv(pic->pitch[idx]);
+	OUTPUT:
+		RETVAL
+
+SV *
+plane_lines(pic, idx)
+	PerlVLC_picture_t *pic;
+	int idx;
+	CODE:
+		RETVAL= (idx < 0 || idx > 3 || !pic->plane[idx])? &PL_sv_undef
+			: newSViv(pic->lines[idx]);
+	OUTPUT:
+		RETVAL
 
 BOOT:
 # BEGIN GENERATED BOOT CONSTANTS
