@@ -145,7 +145,7 @@ int PerlVLC_media_player_mg_free(pTHX_ SV *player_sv, MAGIC* mg) {
 	/* VLC shouldn't have any more picture objects at this point */
 	for (i= 0; i < mpinfo->picture_count; i++) {
 		mpinfo->pictures[i]->held_by_vlc= 0;
-		sv_2mortal(mpinfo->pictures[i]->self_sv); // release our hidden reference to the perl objects
+		sv_2mortal((SV*) mpinfo->pictures[i]->self_hv); // release our hidden reference to the perl objects
 	}
 	if (mpinfo->pictures) Safefree(mpinfo->pictures);
 	/* Now it should be safe to free mpinfo */
@@ -243,18 +243,27 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 
 SV * PerlVLC_wrap_picture(PerlVLC_picture_t *pic) {
 	PERLVLC_TRACE("PerlVLC_wrap_picture(%p)", pic);
-	SV *self= newRV_noinc((SV*) newHV());
-	sv_bless(self, gv_stashpv("VideoLAN::LibVLC::Picture", GV_ADD));
-	PerlVLC_set_picture_mg(self, pic);
-	pic->self_sv= self;
+	SV *self;
+	if (!pic) return &PL_sv_undef;
+	if (!pic->self_hv) {
+		self= newRV_noinc((SV*) (pic->self_hv= newHV()));
+		sv_bless(self, gv_stashpv("VideoLAN::LibVLC::Picture", GV_ADD));
+		/* after this, when the HV goes out of scope it calls the mg_free (our destructor) */
+		PerlVLC_set_picture_mg(self, pic);
+	} else {
+		self= newRV_inc((SV*) pic->self_hv);
+	}
 	return self;
 }
 
-/* This shouldn't get called until the wrapper SV goes out of scope */
+/* This shouldn't get called until the self_hv goes out of scope */
 int PerlVLC_picture_mg_free(pTHX_ SV *picture_sv, MAGIC *mg) {
 	PerlVLC_picture_t *pic= (PerlVLC_picture_t*) mg->mg_ptr;
 	PERLVLC_TRACE("PerlVLC_picture_mg_free(%p)", pic);
-	if (pic) PerlVLC_picture_destroy(pic);
+	if (pic) {
+		pic->self_hv= NULL;
+		PerlVLC_picture_destroy(pic);
+	}
 	return 0;
 }
 
@@ -263,6 +272,8 @@ void PerlVLC_picture_destroy(PerlVLC_picture_t *pic) {
 	PERLVLC_TRACE("PerlVLC_picture_destroy(%p)", pic);
 	if (pic->held_by_vlc)
 		warn("BUG: Picture object destroyed while VLC still has access to it!");
+	if (pic->self_hv)
+		croak("BUG: Picture object destroyed while Perl still has access to it!");
 	/* For each plane, the buffer either came from a perl scalar ref, or was allocated directly. */
 	for (i= 0; i < PERLVLC_PICTURE_PLANES; i++) {
 		if (pic->plane_buffer_sv[i])
@@ -271,101 +282,6 @@ void PerlVLC_picture_destroy(PerlVLC_picture_t *pic) {
 			Safefree(pic->plane[i]);
 	}
 	Safefree(pic);
-}
-
-/* Mortal sin here, but instead of allocating a struct to pass to the
- * callback and trying to figure out how to free it when needed, I'm
- * just packing the file descriptor, the log level, and the booleans
- * as a single 32-bit integer, then casting it to a pointer...
- */
-#define PERLVLC_ERR_FD_MASK   0xFFFFFF
-#define PERLVLC_ERR_LEV_SHIFT 24
-#define PERLVLC_ERR_LEV_MASK  0xF
-#define PERLVLC_ERR_WANT_CONTEXT_BIT 0x10000000
-#define PERLVLC_ERR_WANT_OBJECT_BIT  0x20000000
-
-void PerlVLC_log_cb(void *data, int level, const libvlc_log_t *ctx, const char *fmt, va_list args) {
-	char buffer[1024], *pos, *lim;
-	const char *module, *file, *name, *header;
-	int fd, minlev, wrote, line;
-	uintptr_t objid;
-	
-	fd= PTR2UV(data) & PERLVLC_ERR_FD_MASK;
-	minlev= (PTR2UV(data) >> PERLVLC_ERR_LEV_SHIFT) & PERLVLC_ERR_LEV_MASK;
-	if (level < minlev) return;
-	
-	((uint16_t*)buffer)[0]= (uint16_t) 1; /* callback ID is always 1 for logger */
-	buffer[2]= (uint8_t) level;
-	pos= buffer+3;
-	lim= buffer+sizeof(buffer)-1; /* lim points to last character to make sure we can terminate the string */
-	if (PTR2UV(data) & PERLVLC_ERR_WANT_CONTEXT_BIT) {
-		libvlc_log_get_context(ctx, &module, &file, &line);
-		wrote= snprintf(pos, lim-pos, "module=%s", module);
-		if (wrote > 0 && wrote < lim-pos) pos += wrote+1;
-		wrote= snprintf(pos, lim-pos, "file=%s", file);
-		if (wrote > 0 && wrote < lim-pos) pos+= wrote+1;
-		wrote= snprintf(pos, lim-pos, "line=%d", line);
-		if (wrote > 0 && wrote < lim-pos) pos += wrote+1;
-	}
-	if (PTR2UV(data) & PERLVLC_ERR_WANT_OBJECT_BIT) {
-		libvlc_log_get_object(ctx, &name, &header, &objid);
-		wrote= snprintf(pos, lim-pos, "name=%s", name);
-		if (wrote > 0 && wrote < lim-pos) pos += wrote+1;
-		wrote= snprintf(pos, lim-pos, "header=%s", header);
-		if (wrote > 0 && wrote < lim-pos) pos += wrote+1;
-		wrote= snprintf(pos, lim-pos, "id=%ld", objid);
-		if (wrote > 0 && wrote < lim-pos) pos += wrote+1;
-	}
-	wrote= vsnprintf(pos, lim-pos, fmt, args);
-	if (wrote > 0) { pos += wrote; if (pos > lim) pos= lim; }
-	
-	/* can't report write errors... so just return? */
-	wrote= write(fd, buffer, pos-buffer);
-}
-
-void PerlVLC_log_extract_attrs(SV *buffer, HV *attrs) {
-	size_t len;
-	const char *start, *end, *lim, *mid;
-	SV *tmp;
-	
-	start= SvPV(buffer, len);
-	lim= start + len;
-	start += 2; /* skip callback ID */
-	if (start < lim) { /* extract log level */
-		tmp= newSViv(*start & 0xFF);
-		if (!hv_store(attrs, "level", 5, tmp, 0)) sv_2mortal(tmp);
-		start++;
-	}
-	while (start < lim) {
-		end= memchr(start, 0, lim-start);
-		if (end > start && end < lim && (mid= memchr(start, '=', end-start))) {
-			tmp= newSVpvn(mid+1, end-mid-1);
-			if (!hv_store(attrs, start, mid-start, tmp, 0)) sv_2mortal(tmp);
-			start= end+1;
-		}
-		else {
-			/* start is the new beginning of the scalar */
-			sv_chop(buffer, start);
-			break;
-		}
-	}
-}
-
-void PerlVLC_enable_logging(libvlc_instance_t *vlc, int fd, int lev, bool with_context, bool with_object) {
-#if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20100)
-	if (fd < 0 || fd > PERLVLC_ERR_FD_MASK) croak("fd %d out of range", fd);
-	if (lev < 0 || lev > PERLVLC_ERR_LEV_MASK) croak("err level %d out of range", lev);
-	libvlc_log_set(vlc, &PerlVLC_log_cb,
-		NUM2PTR(void*,
-			fd
-			| (lev << PERLVLC_ERR_LEV_SHIFT)
-			| (with_context? PERLVLC_ERR_WANT_CONTEXT_BIT : 0)
-			| (with_object? PERLVLC_ERR_WANT_OBJECT_BIT : 0)
-		)
-	);
-#else
-	croak("libvlc_log_* API not supported on this version");
-#endif
 }
 
 /*------------------------------------------------------------------------------------------------
@@ -379,6 +295,7 @@ void PerlVLC_enable_logging(libvlc_instance_t *vlc, int fd, int lev, bool with_c
 
 #define PERLVLC_MSG_STREAM_MARKER      0xF0F1
 #define PERLVLC_MSG_STREAM_CHECK(m)    ((uint16_t) (0x101 * (m)->event_id * (m)->payload_len))
+#define PERLVLC_MSG_LOG                 1
 #define PERLVLC_MSG_VIDEO_LOCK_EVENT    2
 #define PERLVLC_MSG_VIDEO_TRADE_PICTURE 3
 #define PERLVLC_MSG_VIDEO_UNLOCK_EVENT  4
@@ -406,6 +323,16 @@ typedef struct PerlVLC_Message_TradePicture {
 	PerlVLC_picture_t *picture;
 } PerlVLC_Message_TradePicture_t;
 
+typedef struct PerlVLC_Message_LogMsg {
+	PERLVLC_MSG_HEADER
+	uint32_t line;
+	uint32_t objid;
+	uint8_t module_strlen;
+	uint8_t file_strlen;
+	uint8_t name_strlen;
+	uint8_t header_strlen;
+	char stringdata[256-12];
+} PerlVLC_Message_LogMsg_t;
 
 int PerlVLC_send_message(int fd, void *message, size_t message_size) {
 	PerlVLC_Message_t *msg= (PerlVLC_Message_t *) message;
@@ -479,27 +406,49 @@ int PerlVLC_shift_message(char *buffer, int buflen, int *bufpos) {
 }
 
 SV* PerlVLC_inflate_message(PerlVLC_Message_t *msg) {
-	HV *ret= (HV*) sv_2mortal((SV*) newHV()), *obj;
+	HV *obj, *ret= (HV*) sv_2mortal((SV*) newHV());
 	AV *plane, *stride, *height;
+	char *pos;
+	PerlVLC_Message_LogMsg_t *logmsg;
+	PerlVLC_Message_TradePicture_t *picmsg;
+	
 	switch (msg->event_id) {
-/*	case :
+	case PERLVLC_MSG_LOG:
 		{
-			obj= (HV*) sv_2mortal((SV*) newHV());
-			picture= ((PerlVLC_Message_TradePicture_t*) msg)->picture;
-			hv_stores(obj, "id", newSViv(picture->id), 0);
-			plane= (AV*) sv_2mortal((SV*) newAV());
-			stride= (AV*) sv_2mortal((SV*) newAV());
-			height= (AV*) sv_2mortal((SV*) newAV());
-			for (i= 0; 
-			hv_stores(obj, "plane", 
-				int id;
-	void *plane[3];
-	unsigned stride[3];
-	unsigned height[3];
-
-			hv_stores(ret, "picture", PerlVLC_Message_TradePicture *
+			logmsg= (PerlVLC_Message_LogMsg_t *) msg;
+			pos= logmsg->stringdata;
+			if (logmsg->line)
+				hv_stores(ret, "line", newSViv(logmsg->line));
+			if (logmsg->objid)
+				hv_stores(ret, "objid", newSViv(logmsg->objid));
+			if (logmsg->module_strlen) {
+				hv_stores(ret, "module", newSVpvn(pos, logmsg->module_strlen));
+				pos += logmsg->module_strlen+1;
+			}
+			if (logmsg->file_strlen) {
+				hv_stores(ret, "file", newSVpvn(pos, logmsg->file_strlen));
+				pos += logmsg->file_strlen+1;
+			}
+			if (logmsg->name_strlen) {
+				hv_stores(ret, "name", newSVpvn(pos, logmsg->name_strlen));
+				pos += logmsg->name_strlen+1;
+			}
+			if (logmsg->header_strlen) {
+				hv_stores(ret, "header", newSVpvn(pos, logmsg->header_strlen));
+				pos += logmsg->header_strlen+1;
+			}
+			hv_stores(ret, "message", newSVpvn(pos, strlen(pos)));
 		}
-*/
+		if (0) {
+	case PERLVLC_MSG_VIDEO_DISPLAY_EVENT:
+			picmsg= (PerlVLC_Message_TradePicture_t *) msg;
+			picmsg->picture->held_by_vlc= 0;
+	case PERLVLC_MSG_VIDEO_TRADE_PICTURE:
+	case PERLVLC_MSG_VIDEO_UNLOCK_EVENT:
+			picmsg= (PerlVLC_Message_TradePicture_t *) msg;
+			/* The picture knows its own HV, so create a new ref to that */
+			hv_stores(ret, "picture", newRV_inc((SV*) picmsg->picture->self_hv));
+		}
 	default:
 		hv_stores(ret, "object_id", newSViv(msg->object_id));
 		hv_stores(ret, "event_id",  newSViv(msg->event_id));
@@ -517,6 +466,80 @@ static void PerlVLC_cb_log_error(const char *fmt, ...) {
 	int len= vsnprintf(buffer, sizeof(buffer), fmt, argp);
 	int wrote= write(2, buffer, len);
 	(void) wrote; /* nothing we can do about errors, since we're in a callback */
+}
+
+/*------------------------------------------------------------------------------------------------
+ * Logging Callback
+ *
+ * VLC provides a callback to receive log messages generated from other threads.
+ * This implementation forwards those messages over the event pipe.
+ */
+
+#if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20100)
+void PerlVLC_log_cb(void *opaque, int level, const libvlc_log_t *ctx, const char *fmt, va_list args) {
+	char buffer[1024], *pos, *lim;
+	const char *module, *file, *name, *header;
+	int fd, minlev, wrote, line, avail, len;
+	uintptr_t objid;
+	PerlVLC_Message_LogMsg_t msg;
+	PerlVLC_vlc_t *vlc= (PerlVLC_vlc_t*) opaque;
+	
+	if (vlc->log_level > level) return;
+	memset(&msg, 0, sizeof(msg));
+	pos= msg.stringdata;
+	lim= msg.stringdata + sizeof(msg.stringdata);
+	if (vlc->log_module || vlc->log_file || vlc->log_line) {
+		libvlc_log_get_context(ctx, &module, &file, &line);
+		if (vlc->log_module && pos + (len= strlen(module)) + 1 < lim) {
+			memcpy(pos, module, len+1);
+			pos += len+1;
+			msg.module_strlen= len;
+		}
+		if (vlc->log_file && pos + (len= strlen(file)) + 1 < lim) {
+			memcpy(pos, file, len+1);
+			pos += len+1;
+			msg.file_strlen= len;
+		}
+		msg.line= line;
+	}
+	if (vlc->log_name || vlc->log_header || vlc->log_objid) {
+		libvlc_log_get_object(ctx, &name, &header, &objid);
+		if (vlc->log_name && pos + (len= strlen(name)) + 1 < lim) {
+			memcpy(pos, name, len+1);
+			pos += len+1;
+			msg.name_strlen= len;
+		}
+		if (vlc->log_header && pos + (len= strlen(header)) + 1 < lim) {
+			memcpy(pos, header, len+1);
+			pos += len+1;
+			msg.header_strlen= len;
+		}
+		msg.objid= objid;
+	}
+	wrote= vsnprintf(pos, lim-pos, fmt, args);
+	if (wrote > 0) { pos += wrote; if (pos >= lim) pos= lim-1; }
+	*pos++ = 0;
+	msg.event_id= PERLVLC_MSG_LOG;
+	PerlVLC_send_message(vlc->event_pipe[1], &msg, ((char*)pos) - ((char*)&msg));
+}
+#endif
+
+void PerlVLC_enable_logging(PerlVLC_vlc_t *vlc, int lev,
+	bool with_module, bool with_file, bool with_line,
+	bool with_name, bool with_header, bool with_object
+) {
+#if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20100)
+	PerlVLC_vlc_init_event_pipe(vlc);
+	vlc->log_module= with_module;
+	vlc->log_file= with_file;
+	vlc->log_line= with_line;
+	vlc->log_name= with_name;
+	vlc->log_header= with_header;
+	vlc->log_objid= with_object;
+	libvlc_log_set(vlc->instance, &PerlVLC_log_cb, vlc);
+#else
+	croak("libvlc_log_* API not supported on this version");
+#endif
 }
 
 /*------------------------------------------------------------------------------------------------
@@ -735,13 +758,20 @@ void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, bool unlock_cb, bo
 #endif
 }
 
-//void PerlVLC_parse_video_callback(PerlVLC_player_t *mpinfo, SV *buffer) {
-//	
-//}
-//
-//void PerlVLC_reply_to_video_lock() {
-//	
-//}
+void PerlVLC_player_queue_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic) {
+	void *larger;
+	if (player->picture_count + 1 < player->picture_alloc) {
+		if ((larger= realloc(player->pictures, sizeof(void*) * (player->picture_alloc + 8)))) {
+			player->pictures= (PerlVLC_picture_t**) larger;
+			player->picture_alloc += 8;
+		}
+		else croak("Can't grow picture array");
+	}
+	if (!pic->self_hv) croak("BUG: picture lacks self_hv");
+	player->pictures[player->picture_count++]= pic;
+	/* maintain a refcnt on the HV */
+	SvREFCNT_inc(pic->self_hv);
+}
 
 /*------------------------------------------------------------------------------------------------
  * Set up the vtable structs for applying magic

@@ -55,4 +55,4 @@ O_LIBVLC_PICTURE
 
 OUTPUT
 O_LIBVLC_PICTURE
-	$arg = $var? PerlVLC_wrap_picture($var) : &PL_sv_undef;
+	$arg = PerlVLC_wrap_picture($var);

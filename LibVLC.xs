@@ -348,6 +348,31 @@ _build_metadata(media)
 
 MODULE = VideoLAN::LibVLC              PACKAGE = VideoLAN::LibVLC::MediaPlayer
 
+PerlVLC_picture_t *
+pop_picture(player)
+	PerlVLC_player_t *player
+	INIT:
+		int i;
+	CODE:
+		/* search for any picture that is not already pushed into the VLC queue */
+		RETVAL= NULL;
+		for (i= 0; i < player->picture_count; i++)
+			if (!player->pictures[i]->held_by_vlc) {
+				RETVAL= player->pictures[i];
+				sv_2mortal((SV*) player->pictures[i]->self_hv);
+				player->pictures[i]= player->pictures[--player->picture_count];
+				break;
+			}
+	OUTPUT:
+		RETVAL
+
+void
+push_picture(player, pic)
+	PerlVLC_player_t *player
+	PerlVLC_picture_t *pic
+	PPCODE:
+		PerlVLC_player_queue_picture(player, pic);
+
 MODULE = VideoLAN::LibVLC              PACKAGE = VideoLAN::LibVLC::Picture
 
 PerlVLC_picture_t *

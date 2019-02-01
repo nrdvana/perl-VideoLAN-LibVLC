@@ -18,7 +18,7 @@ extern void* PerlVLC_get_mg(SV *obj, MGVTBL *mg_vtbl);
 typedef struct PerlVLC_picture {
 	int id;
 	char chroma[4];
-	SV *self_sv;
+	HV *self_hv;
 	int held_by_vlc;
 	unsigned width, height;
 	void *plane[PERLVLC_PICTURE_PLANES];
@@ -38,6 +38,8 @@ typedef struct PerlVLC_vlc {
 	int event_pipe[2];
 	char event_recv_buf[PERLVLC_MSG_BUFFER_SIZE];
 	int event_recv_bufpos;
+	int log_level;
+	int log_module:1, log_file:1, log_line:1, log_name:1, log_header:1, log_objid:1;
 } PerlVLC_vlc_t;
 
 #define PerlVLC_set_instance_mg(obj, ptr)     PerlVLC_set_mg(obj, &PerlVLC_instance_mg_vtbl, (void*) ptr)
@@ -53,6 +55,7 @@ typedef struct PerlVLC_player {
 	int object_id;
 	int event_pipe;
 	int picture_count;
+	int picture_alloc;
 	PerlVLC_picture_t **pictures;
 	int vbuf_pipe[2];
 	/* these fields are for the VLC callbacks */
@@ -64,6 +67,7 @@ typedef struct PerlVLC_player {
 #define PerlVLC_get_media_player_mg(obj)      ((PerlVLC_player_t*) PerlVLC_get_mg(obj, &PerlVLC_media_player_mg_vtbl))
 extern SV * PerlVLC_wrap_media_player(libvlc_media_player_t *player);
 void PerlVLC_player_init_event_pipe(PerlVLC_player_t *player, PerlVLC_vlc_t *vlc);
+void PerlVLC_player_queue_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic);
 
 #define PerlVLC_set_media_mg(obj, ptr)        PerlVLC_set_mg(obj, &PerlVLC_media_mg_vtbl, (void*) ptr)
 #define PerlVLC_get_media_mg(obj)             ((libvlc_media_t*) PerlVLC_get_mg(obj, &PerlVLC_media_mg_vtbl))
