@@ -115,6 +115,12 @@ SV * PerlVLC_wrap_media_player(libvlc_media_player_t *player) {
 	return self;
 }
 
+void PerlVLC_player_init_vbuf_pipe(PerlVLC_player_t *player) {
+	if (player->vbuf_pipe[0] >= 0) return; /* nothing to do */
+	if (pipe(player->vbuf_pipe) != 0)
+		croak("pipe() failed: %s", strerror(errno));
+}
+
 int PerlVLC_media_player_mg_free(pTHX_ SV *player_sv, MAGIC* mg) {
 	PerlVLC_player_t *mpinfo= (PerlVLC_player_t*) mg->mg_ptr;
 	libvlc_media_player_t *player;
@@ -135,14 +141,14 @@ int PerlVLC_media_player_mg_free(pTHX_ SV *player_sv, MAGIC* mg) {
 		 */
 		libvlc_video_set_callbacks(mpinfo->player, PerlVLC_video_lock_cb, NULL, NULL, NULL);
 	}
-	if (mpinfo->vbuf_pipe[0] >= 0)  close(mpinfo->vbuf_pipe[0]);
-	if (mpinfo->vbuf_pipe[1] >= 0)  close(mpinfo->vbuf_pipe[1]);
+	if (mpinfo->vbuf_pipe[0] >= 0) close(mpinfo->vbuf_pipe[0]);
+	if (mpinfo->vbuf_pipe[1] >= 0) close(mpinfo->vbuf_pipe[1]);
 	/* Then release the reference to the player, which may free it right now,
 	 * or maybe not.  libvlc doesn't let us look at the reference count.
 	 */
 	PERLVLC_TRACE("libvlc_media_player_release(%p)", mpinfo->player);
 	libvlc_media_player_release(mpinfo->player);
-	/* VLC shouldn't have any more picture objects at this point */
+	/* VLC shouldn't have any more picture objects at this point. */
 	for (i= 0; i < mpinfo->picture_count; i++) {
 		mpinfo->pictures[i]->held_by_vlc= 0;
 		sv_2mortal((SV*) mpinfo->pictures[i]->self_hv); // release our hidden reference to the perl objects
@@ -172,7 +178,7 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 	PerlVLC_picture_t self, *ret;
 	HV *hash, *plane_hash;
 	SV **item;
-	AV *planes;
+	AV *av;
 	int i;
 	const char *chroma;
 	STRLEN len;
@@ -198,33 +204,41 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 		croak("height is required");
 	self.height= SvIV(*item);
 
-	// TODO: planes
-	if ((item= hv_fetchs(hash, "planes", 0)) && *item && SvOK(*item)) {
-		if (!SvROK(*item) || SvTYPE(SvRV(*item)) != SVt_PVAV)
-			croak("'plane' must be an array of plane hashrefs");
-		planes= (AV*) SvRV(*item);
-		if (av_len(planes)+1 > PERLVLC_PICTURE_PLANES)
-			croak("'plane' can have at most %d elements", PERLVLC_PICTURE_PLANES);
-		for (i= 0; i <= av_len(planes); i++) {
-			if (!(item= av_fetch(planes, i, 0)) || !*item || !SvROK(*item) || SvTYPE(SvRV(*item)) != SVt_PVHV)
-				croak("Invalid entry in 'plane' array");
-			plane_hash= (HV*) SvRV(*item);
-			
-			if (!(item= hv_fetchs(plane_hash, "pitch", 0)) || !*item || !SvOK(*item))
-				croak("plane[%d]{pitch} is required", i);
-			self.pitch[i]= SvIV(*item);
-			
-			if (!(item= hv_fetchs(plane_hash, "lines", 0)) || !*item || !SvOK(*item))
-				croak("plane[%d]{lines} is required", i);
-			self.lines[i]= SvIV(*item);
-			
-			// If buffer is given, it must be a very special scalarref that indicates
-			// it wasn't allocated by perl.
-			if ((item= hv_fetchs(plane_hash, "buffer", 0)) && *item && SvOK(*item)) {
-				if (!SvROK(*item) || SvTYPE(SvRV(*item)) >= SVt_PVAV || !SvPOK(SvRV(*item)))
-					croak("plane[%d]{buffer} is not a valid scalar ref");
-				self.plane_buffer_sv[i]= *item;
+	if ((item= hv_fetchs(hash, "plane_pitch", 0)) && *item && SvOK(*item)) {
+		if (SvROK(*item) && SvTYPE(SvRV(*item)) == SVt_PVAV) {
+			av= (AV*) SvRV(*item);
+			for (i= 0; i < 3 && i <= av_len(av) ; i++) {
+				item= av_fetch(av, i, 0);
+				if (!item || !*item || !SvOK(*item))
+					croak("Invalid %s->[%d]", "plane_pitch", i);
+				self.pitch[i]= SvIV(*item);
 			}
+		}
+		else
+			self.pitch[0]= SvIV(*item);
+	}
+	if ((item= hv_fetchs(hash, "plane_lines", 0)) && *item && SvOK(*item)) {
+		if (SvROK(*item) && SvTYPE(SvRV(*item)) == SVt_PVAV) {
+			av= (AV*) SvRV(*item);
+			for (i= 0; i < 3 && i <= av_len(av); i++) {
+				item= av_fetch(av, i, 0);
+				if (!item || !*item || !SvOK(*item))
+					croak("Invalid %s->[%d]", "plane_lines", i);
+				self.lines[i]= SvIV(*item);
+			}
+		}
+		else
+			self.lines[0]= SvIV(*item);
+	}
+	if ((item= hv_fetchs(hash, "plane", 0)) && *item && SvOK(*item)) {
+		av= (SvROK(*item) && SvTYPE(SvRV(*item)) == SVt_PVAV)? (AV*) SvRV(*item) : NULL;
+		for (i= 0; av? (i < 3 && i <= av_len(av)) : (i < 1); i++) {
+			if (av) item= av_fetch(av, i, 0);
+			if (!item || !*item || !SvROK(*item) || !SvPOK(SvRV(*item)))
+				croak("Invalid %s->[%d]", "plane", i);
+			/* hold a reference to the scalar within the scalar-ref */
+			self.plane_buffer_sv[i]= SvRV(*item);
+			self.plane[i]= SvPVX(self.plane_buffer_sv[i]);
 		}
 	}
 
@@ -318,11 +332,6 @@ typedef struct PerlVLC_Message {
 	char     payload[];
 } PerlVLC_Message_t;
 
-typedef struct PerlVLC_Message_TradePicture {
-	PERLVLC_MSG_HEADER
-	PerlVLC_picture_t *picture;
-} PerlVLC_Message_TradePicture_t;
-
 typedef struct PerlVLC_Message_LogMsg {
 	PERLVLC_MSG_HEADER
 	uint32_t line;
@@ -333,6 +342,21 @@ typedef struct PerlVLC_Message_LogMsg {
 	uint8_t header_strlen;
 	char stringdata[256-12];
 } PerlVLC_Message_LogMsg_t;
+
+typedef struct PerlVLC_Message_TradePicture {
+	PERLVLC_MSG_HEADER
+	PerlVLC_picture_t *picture;
+} PerlVLC_Message_TradePicture_t;
+
+typedef struct PerlVLC_Message_ImgFmt {
+	PERLVLC_MSG_HEADER
+	char chroma[4];
+	unsigned width;
+	unsigned height;
+	unsigned plane_pitch[3];
+	unsigned plane_lines[3];
+	unsigned allocated;
+} PerlVLC_Message_ImgFmt_t;
 
 int PerlVLC_send_message(int fd, void *message, size_t message_size) {
 	PerlVLC_Message_t *msg= (PerlVLC_Message_t *) message;
@@ -407,10 +431,12 @@ int PerlVLC_shift_message(char *buffer, int buflen, int *bufpos) {
 
 SV* PerlVLC_inflate_message(PerlVLC_Message_t *msg) {
 	HV *obj, *ret= (HV*) sv_2mortal((SV*) newHV());
-	AV *plane, *stride, *height;
+	AV *plane, *pitch, *lines;
 	char *pos;
+	int i;
 	PerlVLC_Message_LogMsg_t *logmsg;
 	PerlVLC_Message_TradePicture_t *picmsg;
+	PerlVLC_Message_ImgFmt_t *fmtmsg;
 	
 	switch (msg->event_id) {
 	case PERLVLC_MSG_LOG:
@@ -448,6 +474,19 @@ SV* PerlVLC_inflate_message(PerlVLC_Message_t *msg) {
 			picmsg= (PerlVLC_Message_TradePicture_t *) msg;
 			/* The picture knows its own HV, so create a new ref to that */
 			hv_stores(ret, "picture", newRV_inc((SV*) picmsg->picture->self_hv));
+		}
+		if (0) {
+	case PERLVLC_MSG_VIDEO_FORMAT_EVENT:
+			fmtmsg= (PerlVLC_Message_ImgFmt_t *) msg;
+			hv_stores(ret, "chroma", newSVpvn(fmtmsg->chroma, 4));
+			hv_stores(ret, "width", newSViv(fmtmsg->width));
+			hv_stores(ret, "height", newSViv(fmtmsg->height));
+			hv_stores(ret, "plane_pitch", newRV((SV*) (pitch= newAV())));
+			hv_stores(ret, "plane_lines", newRV((SV*) (lines= newAV())));
+			for (i= 0; i < 3; i++) {
+				av_push(pitch, newSViv(fmtmsg->plane_pitch[i]));
+				av_push(lines, newSViv(fmtmsg->plane_pitch[i]));
+			}
 		}
 	default:
 		hv_stores(ret, "object_id", newSViv(msg->object_id));
@@ -646,23 +685,13 @@ static void PerlVLC_video_display_cb(void *opaque, void *picture) {
 		PerlVLC_cb_log_error("BUG: Video unlock callback can't send event\n");
 }
 
-typedef struct PerlVLC_Message_ImgFmt {
-	PERLVLC_MSG_HEADER
-	char chroma[4];
-	unsigned width;
-	unsigned height;
-	unsigned plane_pitch[3];
-	unsigned plane_rows[3];
-	unsigned allocated;
-} PerlVLC_Message_ImgFmt_t;
-
 /* The VLC decoder calls this when it knows the format of the media.
  * We relay this to the main thread where the user may opt to change some of the parameters,
  * and where the user should prepare the rendering buffers.
  * The user sends back the count of buffers allocated (why do they need that?) and any modifications
  * to these arguments.
  */
-static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigned *width_p, unsigned *height_p, unsigned *pitches, unsigned *lines) {
+static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigned *width_p, unsigned *height_p, unsigned *pitch, unsigned *lines) {
 	PerlVLC_player_t *mpinfo= (PerlVLC_player_t*) *opaque_p;
 	PerlVLC_Message_ImgFmt_t fmt_msg;
 	int i;
@@ -682,8 +711,8 @@ static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigne
 	fmt_msg.width= *width_p;
 	fmt_msg.height= *height_p;
 	for (i= 0; i < 3; i++) {
-		fmt_msg.plane_pitch[i]= pitches[i];
-		fmt_msg.plane_rows[i]= lines[i];
+		fmt_msg.plane_pitch[i]= pitch[i];
+		fmt_msg.plane_lines[i]= lines[i];
 	}
 
 	/* Send event to main thread */
@@ -708,8 +737,8 @@ static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigne
 	*width_p= fmt_msg.width;
 	*height_p= fmt_msg.height;
 	for (i= 0; i < 3; i++) {
-		pitches[i]= fmt_msg.plane_pitch[i];
-		lines[i]=   fmt_msg.plane_rows[i];
+		pitch[i]= fmt_msg.plane_pitch[i];
+		lines[i]=   fmt_msg.plane_lines[i];
 	}
 	/* Return the number allocated */
 	return fmt_msg.allocated;
@@ -735,12 +764,10 @@ static void PerlVLC_video_cleanup_cb(void *opaque) {
 
 void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, bool unlock_cb, bool display_cb, bool format_cb, bool cleanup_cb) {
 #if (LIBVLC_VERSION_MAJOR < 2)
-	if (format_cb)
+	if (format_cb || cleanup_cb)
 		croak("Can't support set_format callback on LibVLC %d.%d", LIBVLC_VERSION_MAJOR, LIBVLC_VERSION_MINOR);
 #endif
-	if (!mpinfo->vbuf_pipe[1]) {
-		/* TODO: */
-	}
+	PerlVLC_player_init_vbuf_pipe(mpinfo);
 	libvlc_video_set_callbacks(
 		mpinfo->player,
 		PerlVLC_video_lock_cb,

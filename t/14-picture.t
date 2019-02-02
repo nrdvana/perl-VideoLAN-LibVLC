@@ -10,9 +10,8 @@ my %info= (
 	chroma => 'RGBA',
 	width => 16,
 	height => 10,
-	planes => [
-		{ pitch => 64, lines => 10 }
-	]
+	plane_pitch => 64,
+	plane_lines => 10,
 );
 my $picture= new_ok( 'VideoLAN::LibVLC::Picture', [\%info], 'new instance' );
 is( $picture->width, 16, 'width' );
