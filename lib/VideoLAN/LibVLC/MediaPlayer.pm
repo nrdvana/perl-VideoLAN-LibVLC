@@ -3,6 +3,8 @@ package VideoLAN::LibVLC::MediaPlayer;
 use strict;
 use warnings;
 use VideoLAN::LibVLC;
+use Socket qw( AF_UNIX SOCK_STREAM );
+use IO::Handle;
 use Carp;
 
 # ABSTRACT: Media Player
@@ -225,6 +227,17 @@ sub set_video_title_display {
 		$pos= defined $const? $const->() : die "No such subtitle position $pos";
 	}
 	$self->_set_video_title_display($pos, $timeout);
+}
+
+sub _vbuf_pipe {
+	$_[0]{_vbuf_pipe} //= do {
+		socketpair(my $r, my $w, AF_UNIX, SOCK_STREAM, 0)
+			or die "socketpair: $!";
+		$w->blocking(0);
+		# pass file handles to XS
+		$_[0]->_set_vbuf_pipe(fileno($r), fileno($w));
+		[$r, $w];
+	}
 }
 
 1;

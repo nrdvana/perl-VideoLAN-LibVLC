@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use Carp;
 use Scalar::Util 'weaken';
-use Socket qw( AF_UNIX SOCK_DGRAM );
+use Socket qw( AF_UNIX SOCK_STREAM );
 use IO::Handle;
 
 # ABSTRACT: Wrapper for libvlc.so
@@ -266,53 +266,50 @@ you call L</callback_dispatch>.
 =cut
 
 sub log { my $self= shift; $self->_set_logger(@_) if @_; $self->{log} }
+sub can_redirect_log { !!$_[0]->can('libvlc_log_unset') }
+
+# identical to libvlc api, other than needing to pump the event queue to see the messages
+sub libvlc_set_log {
+	my ($self, $callback, $argument)= @_;
+	$self->_set_logger(sub { $callback->($argument, @_) });
+}
 
 sub _set_logger {
 	my ($self, $target, $options)= @_;
-	unless ($self->can('libvlc_log_unset')) {
-		warn "LibVLC log redirection is not supported in this version";
-		return;
-	}
-	# Create the logging pipe if it doesn't exist
-	defined $self->{_log_pipe_r}
-		or pipe($self->{_log_pipe_r}, $self->{_log_pipe_w})
-		or die "pipe: $!";
+	$self->can_redirect_log
+		or croak "LibVLC log redirection is not supported in this version";
 	# If target is undef, cancel the callback
 	if (!defined $target) {
 		return $self->libvlc_log_unset;
 	}
-	# If target is a coderef:
-	elsif (ref $target eq 'CODE') {
-		$self->{log}= $target;
-	}
-	# if target is a logger
-	elsif (ref($target)->can('info')) {
-		$self->{log}= sub {
-			my ($level, $msg, $attr)= @_;
-			$msg= join(' ', $msg, map { "$_=$attr->{$_}" } keys %$attr);
-			if ($level == LOG_LEVEL_DEBUG()) { $target->debug($msg); }
-			elsif ($level == LOG_LEVEL_NOTICE()) { $target->notice($msg); }
-			elsif ($level == LOG_LEVEL_WARNING()) { $target->warn($msg); }
-			elsif ($level >= LOG_LEVEL_ERROR()) { $target->error($msg); }
-			else { $target->warn($msg); } # in case of future log levels
-		};
-	}
 	else {
-		croak "Don't know how to log to $target";
+		$self->_event_pipe; # init file handles, if not already done
+		# If target is a coderef:
+		if (ref $target eq 'CODE') {
+			$self->{log}= $target;
+		}
+		# if target is a logger
+		elsif (ref($target)->can('info')) {
+			$self->{log}= sub {
+				my ($level, $msg, $attr)= @_;
+				$msg= join(' ', $msg, map { "$_=$attr->{$_}" } keys %$attr);
+				if ($level == LOG_LEVEL_DEBUG()) { $target->debug($msg); }
+				elsif ($level == LOG_LEVEL_NOTICE()) { $target->notice($msg); }
+				elsif ($level == LOG_LEVEL_WARNING()) { $target->warn($msg); }
+				elsif ($level >= LOG_LEVEL_ERROR()) { $target->error($msg); }
+				else { $target->warn($msg); } # in case of future log levels
+			};
+		}
+		else {
+			croak "Don't know how to log to $target";
+		}
+		my $lev= $options? $options->{level} : undef;
+		$lev= LOG_LEVEL_NOTICE() unless defined $lev;
+		# Install callback
+		weaken($self);
+		my $cb_id= $self->_register_callback(sub { $self->log->($_[0]) } );
+		$self->_libvlc_log_set($cb_id, $lev, $options->{fields} || ['*']);
 	}
-	my $lev= $options? $options->{level} : undef;
-	$lev= LOG_LEVEL_NOTICE() unless defined $lev;
-	# Install callback to file handle at the C level
-	$self->_enable_logging(fileno($self->_callback_fh_w), $lev, $options->{context}, $options->{object});
-	# Register the handler for the activity on the file handle.  Might be redundant, but doesn't hurt.
-	weaken($self);
-	$self->_register_callback(sub { $self->_dispatch_logger(shift) if $self; }, 1);
-}
-
-sub _dispatch_logger {
-	my ($self, $buffer)= @_;
-	my $attrs= VideoLAN::LibVLC::_log_extract_attrs($buffer);
-	$self->{log}->($attrs->{level}, $buffer, $attrs );
 }
 
 =head1 METHODS
@@ -413,61 +410,44 @@ the callback.
 
 sub callback_dispatch {
 	my ($self)= @_;
-	my $fh= $self->_callback_fh_r;
-	my $buf;
-	while (sysread($fh, $buf, 1024) > 0) {
-		my ($id)= unpack('S', $buf);
-		my $cb= $self->{_callbacks}{$id};
-		if ($cb) {
-			$cb->($buf);
-		} else {
-			warn "received non-existent callback id $id";
-		}
+	$self->_event_pipe;
+	my $event= $self->_decode_next_event
+		or return 0;
+	my $cb= $self->{_callback}{$event->callback_id};
+	$cb->($event);
+	return 1;
+}
+
+sub _event_pipe {
+	$_[0]{_event_pipe} //= do {
+		socketpair(my $r, my $w, AF_UNIX, SOCK_STREAM, 0)
+			or die "socketpair: $!";
+		$r->blocking(0);
+		# pass file handles to XS
+		$_[0]->_set_event_pipe(fileno($r), fileno($w));
+		[$r, $w];
 	}
 }
 
-sub _callback_fh_r {
-	my $self= shift;
-	$self->_create_callback_queue unless defined $self->{_callback_fh_r};
-	$self->{_callback_fh_r};
-}
-
-sub _callback_fh_w {
-	my $self= shift;
-	$self->_create_callback_queue unless defined $self->{_callback_fh_w};
-	$self->{_callback_fh_w};
-}
-
-*callback_fh= *callback_fh_r;
-
-sub _create_callback_queue {
-	my $self= shift;
-	socketpair($self->{_callback_fh_r}, $self->{_callback_fh_w}, AF_UNIX, SOCK_DGRAM, 0)
-		or die "socketpair: $!";
-	$self->{_callback_fh_r}->blocking(0);
-	$self->{_callback_next_id}= 2; # 1 is reserved for logger
-	$self->{_callbacks}= {};
-}
-
+# REMINDER: Be sure to use weak references in callbacks, so that VLC instance
+# doens't end up holding onto sub-resources.
 sub _register_callback {
-	my ($self, $callback, $id)= @_;
-	$self->_create_callback_queue unless defined $self->{_callbacks};
-	my $cbs= $self->{_callbacks};
-	keys %$cbs < 0x7FFF
-		or die "Too many callbacks!  (something is probably wrong)";
-	# Find next free callback
-	if (!defined $id) {
-		do {
-			$id= $self->{_callback_next_id}++;
-			$self->{_callback_next_id}= 2 if $self->{_callback_next_id} > 0xFFFF;
-		} while defined $cbs->{$id};
+	my ($self, $callback)= @_;
+	my $id= 0xFFFF & ($_[0]{_next_cb_id} ||= 1)++;
+	if ($self->{callback}{$id}) {
+		# extreme circumstances, the $id has wrapped around
+		keys %{ $self->{callback} } < 0xFFFF
+			or croak "Max callbacks reached";
+		$id= 0xFFFF & $_[0]{_next_cb_id}++
+			while $self->{callback}{$id};
 	}
-	$cbs->{$id}= $callback;
+	$self->{_callback}{$id}= $callback;
 	return $id;
 }
+
 sub _unregister_callback {
 	my ($self, $id)= @_;
-	delete $self->{_callbacks}{$id};
+	delete $self->{_callback}{$id};
 }
 
 1;

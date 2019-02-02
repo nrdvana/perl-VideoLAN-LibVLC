@@ -90,6 +90,15 @@ libvlc_video_filter_list_get(vlc)
 		}
 		libvlc_module_description_list_release(mlist);
 
+void
+_set_event_pipe(vlc, read_fd, write_fd)
+	PerlVLC_vlc_t *vlc
+	int read_fd
+	int write_fd
+	PPCODE:
+		vlc->event_pipe[0]= read_fd;
+		vlc->event_pipe[1]= write_fd;
+
 SV *
 _decode_next_event(vlc)
 	PerlVLC_vlc_t *vlc
@@ -97,7 +106,7 @@ _decode_next_event(vlc)
 		int len;
 	CODE:
 		if (vlc->event_pipe[0] < 0)
-			PerlVLC_vlc_init_event_pipe(vlc);
+			croak("No event pipe configured");
 		if (!PerlVLC_recv_message(vlc->event_pipe[0], vlc->event_recv_buf, sizeof(vlc->event_recv_buf), &vlc->event_recv_bufpos))
 			RETVAL= &PL_sv_undef;
 		else {
@@ -110,13 +119,36 @@ _decode_next_event(vlc)
 #if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20100)
 
 void
-_enable_logging(vlc, lev, with_context, with_object)
+_libvlc_log_set(vlc, callback_id, level, fields)
 	PerlVLC_vlc_t *vlc
-	int lev
-	bool with_context
-	bool with_object
+	int callback_id
+	int level
+	AV *fields
+	INIT:
+		int i;
+		char *s;
+		SV **item;
 	PPCODE:
-		# TODO
+		if (vlc->event_pipe[1] < 0)
+			croak("Event pipe must be initialized first");
+		vlc->log_level= level;
+		vlc->log_module= vlc->log_file= vlc->log_line= vlc->log_name= vlc->log_header= vlc->log_objid= 0;
+		for (i= 0; i < 1+av_len(fields); i++) {
+			if (!(item= av_fetch(fields, i, 0)) || !*item || !SvOK(*item))
+				croak("Invalid field spec at [%d]", i);
+			s= SvPV_nolen(*item);
+			if (*s == '*' && !s[1]) {
+				vlc->log_module= vlc->log_file= vlc->log_line= vlc->log_name= vlc->log_header= vlc->log_objid= 1;
+			}
+			else if (0 == strcmp(s, "module")) vlc->log_module= 1;
+			else if (0 == strcmp(s, "file")) vlc->log_file= 1;
+			else if (0 == strcmp(s, "line")) vlc->log_line= 1;
+			else if (0 == strcmp(s, "name")) vlc->log_name= 1;
+			else if (0 == strcmp(s, "header")) vlc->log_header= 1;
+			else if (0 == strcmp(s, "objid")) vlc->log_objid= 1;
+			else warn("No such logging field %s", s);
+		}
+		PerlVLC_set_log_cb(vlc, callback_id);
 
 void
 libvlc_log_unset(vlc)
@@ -348,6 +380,15 @@ _build_metadata(media)
 
 MODULE = VideoLAN::LibVLC              PACKAGE = VideoLAN::LibVLC::MediaPlayer
 
+void
+_set_vbuf_pipe(player, read_fd, write_fd)
+	PerlVLC_player_t *player
+	int read_fd
+	int write_fd
+	PPCODE:
+		player->vbuf_pipe[0]= read_fd;
+		player->vbuf_pipe[1]= write_fd;
+
 PerlVLC_picture_t *
 pop_picture(player)
 	PerlVLC_player_t *player
@@ -359,8 +400,7 @@ pop_picture(player)
 		for (i= 0; i < player->picture_count; i++)
 			if (!player->pictures[i]->held_by_vlc) {
 				RETVAL= player->pictures[i];
-				sv_2mortal((SV*) player->pictures[i]->self_hv);
-				player->pictures[i]= player->pictures[--player->picture_count];
+				PerlVLC_player_remove_picture(player, RETVAL);
 				break;
 			}
 	OUTPUT:
@@ -371,7 +411,15 @@ push_picture(player, pic)
 	PerlVLC_player_t *player
 	PerlVLC_picture_t *pic
 	PPCODE:
-		PerlVLC_player_queue_picture(player, pic);
+		PerlVLC_player_add_picture(player, pic);
+
+int
+fill_queue(player)
+	PerlVLC_player_t *player
+	CODE:
+		RETVAL= PerlVLC_player_fill_picture_queue(player);
+	OUTPUT:
+		RETVAL
 
 MODULE = VideoLAN::LibVLC              PACKAGE = VideoLAN::LibVLC::Picture
 

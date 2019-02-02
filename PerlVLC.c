@@ -10,9 +10,10 @@
 
 #include "PerlVLC.h"
 
-#define PERLVLC_TRACE warn
+#define PERLVLC_TRACE(x...) PerlVLC_cb_log_error(x)
 //#define PERLVLC_TRACE(...) ((void)0)
 
+static void PerlVLC_cb_log_error(const char *fmt, ...);
 static void* PerlVLC_video_lock_cb(void *data, void **planes);
 static void PerlVLC_video_unlock_cb(void *data, void *picture, void * const *planes);
 static void PerlVLC_video_display_cb(void *data, void *picture);
@@ -48,7 +49,7 @@ void* PerlVLC_get_mg(SV *obj, MGVTBL *mg_vtbl) {
 SV * PerlVLC_wrap_instance(libvlc_instance_t *instance) {
 	SV *self;
 	PerlVLC_vlc_t *vlc;
-	PERLVLC_TRACE("PerlVLC_wrap_instance(%p)", vlc);
+	PERLVLC_TRACE("PerlVLC_wrap_instance(%p)", instance);
 	if (!instance) return &PL_sv_undef;
 	self= newRV_noinc((SV*)newHV());
 	sv_bless(self, gv_stashpv("VideoLAN::LibVLC", GV_ADD));
@@ -61,12 +62,6 @@ SV * PerlVLC_wrap_instance(libvlc_instance_t *instance) {
 	return self;
 }
 
-void PerlVLC_vlc_init_event_pipe(PerlVLC_vlc_t *vlc) {
-	if (vlc->event_pipe[0] >= 0) return; /* nothing to do */
-	if (pipe(vlc->event_pipe) != 0)
-		croak("pipe() failed: %s", strerror(errno));
-}
-
 int PerlVLC_instance_mg_free(pTHX_ SV *inst_sv, MAGIC *mg) {
 	PerlVLC_vlc_t *vlc= (PerlVLC_vlc_t*) mg->mg_ptr;
 	PERLVLC_TRACE("PerlVLC_instance_mg_free(%p)", vlc);
@@ -76,8 +71,6 @@ int PerlVLC_instance_mg_free(pTHX_ SV *inst_sv, MAGIC *mg) {
 	 */
 	PERLVLC_TRACE("libvlc_instance_release(%p)", vlc->instance);
 	libvlc_release(vlc->instance);
-	if (vlc->event_pipe[0] >= 0) close(vlc->event_pipe[0]);
-	if (vlc->event_pipe[1] >= 0) close(vlc->event_pipe[1]);
 	/* Now it should be safe to free mpinfo */
 	PERLVLC_TRACE("free(vlc=%p)", vlc);
 	Safefree(vlc);
@@ -115,12 +108,6 @@ SV * PerlVLC_wrap_media_player(libvlc_media_player_t *player) {
 	return self;
 }
 
-void PerlVLC_player_init_vbuf_pipe(PerlVLC_player_t *player) {
-	if (player->vbuf_pipe[0] >= 0) return; /* nothing to do */
-	if (pipe(player->vbuf_pipe) != 0)
-		croak("pipe() failed: %s", strerror(errno));
-}
-
 int PerlVLC_media_player_mg_free(pTHX_ SV *player_sv, MAGIC* mg) {
 	PerlVLC_player_t *mpinfo= (PerlVLC_player_t*) mg->mg_ptr;
 	libvlc_media_player_t *player;
@@ -141,8 +128,6 @@ int PerlVLC_media_player_mg_free(pTHX_ SV *player_sv, MAGIC* mg) {
 		 */
 		libvlc_video_set_callbacks(mpinfo->player, PerlVLC_video_lock_cb, NULL, NULL, NULL);
 	}
-	if (mpinfo->vbuf_pipe[0] >= 0) close(mpinfo->vbuf_pipe[0]);
-	if (mpinfo->vbuf_pipe[1] >= 0) close(mpinfo->vbuf_pipe[1]);
 	/* Then release the reference to the player, which may free it right now,
 	 * or maybe not.  libvlc doesn't let us look at the reference count.
 	 */
@@ -322,7 +307,7 @@ void PerlVLC_picture_destroy(PerlVLC_picture_t *pic) {
 /* changes here should be kept in sync with PERLVLC_MSG_BUFFER_SIZE in header */
 #define PERLVLC_MSG_HEADER \
 	uint16_t stream_marker; \
-	uint16_t object_id; \
+	uint16_t callback_id; \
 	uint8_t  event_id; \
 	uint8_t  payload_len; \
 	uint16_t stream_check;
@@ -340,7 +325,7 @@ typedef struct PerlVLC_Message_LogMsg {
 	uint8_t file_strlen;
 	uint8_t name_strlen;
 	uint8_t header_strlen;
-	char stringdata[256-12];
+	char stringdata[255-12];
 } PerlVLC_Message_LogMsg_t;
 
 typedef struct PerlVLC_Message_TradePicture {
@@ -359,10 +344,13 @@ typedef struct PerlVLC_Message_ImgFmt {
 } PerlVLC_Message_ImgFmt_t;
 
 int PerlVLC_send_message(int fd, void *message, size_t message_size) {
+	PERLVLC_TRACE("PerlVLC_send_message(%d, %d bytes)", fd, (int)message_size);
 	PerlVLC_Message_t *msg= (PerlVLC_Message_t *) message;
 	int ofs= 0, wrote;
-	if (message_size - sizeof(PerlVLC_Message_t) > 255)
-		croak("BUG: PerlVLC message exceeds protocol size");
+	if (message_size - sizeof(PerlVLC_Message_t) > 255) {
+		PerlVLC_cb_log_error("BUG: PerlVLC message exceeds protocol size");
+		return;
+	}
 	msg->payload_len= (uint8_t) (message_size - sizeof(PerlVLC_Message_t));
 	/* these help identify the start of messages, in case something goes wrong */
 	msg->stream_marker= 0xF0F1;
@@ -386,6 +374,7 @@ int PerlVLC_recv_message(int fd, char *buffer, int buflen, int *bufpos) {
 		/* read more until we have a full header */
 		while (pos < sizeof(PerlVLC_Message_t)) {
 			got= recv(fd, buffer+pos, buflen-pos, 0);
+			PERLVLC_TRACE("PerlVLC_recv_message  recv(%d,%p,%d)=%d", fd, buffer+pos, buflen-pos, got);
 			if (got <= 0) {
 				*bufpos= pos;
 				return 0;
@@ -411,6 +400,7 @@ int PerlVLC_recv_message(int fd, char *buffer, int buflen, int *bufpos) {
 		/* Read more of it until we have it all */
 		while (pos < sizeof(*msg) + msg->payload_len) {
 			got= recv(fd, buffer+pos, buflen-pos, 0);
+			PERLVLC_TRACE("PerlVLC_recv_message  recv(%d,%p,%d)=%d", fd, buffer+pos, buflen-pos, got);
 			if (got <= 0) {
 				*bufpos= pos;
 				return 0;
@@ -418,6 +408,7 @@ int PerlVLC_recv_message(int fd, char *buffer, int buflen, int *bufpos) {
 			pos+= got;
 		}
 		*bufpos= pos;
+		PERLVLC_TRACE("PerlVLC_recv_message = %d bytes", (int) sizeof(*msg)+msg->payload_len);
 		return 1;
 	}
 }
@@ -489,7 +480,7 @@ SV* PerlVLC_inflate_message(PerlVLC_Message_t *msg) {
 			}
 		}
 	default:
-		hv_stores(ret, "object_id", newSViv(msg->object_id));
+		hv_stores(ret, "callback_id", newSViv(msg->callback_id));
 		hv_stores(ret, "event_id",  newSViv(msg->event_id));
 	}
 	return newRV_inc((SV*) ret);
@@ -502,7 +493,12 @@ SV* PerlVLC_inflate_message(PerlVLC_Message_t *msg) {
 static void PerlVLC_cb_log_error(const char *fmt, ...) {
 	char buffer[256];
 	va_list argp;
-	int len= vsnprintf(buffer, sizeof(buffer), fmt, argp);
+	va_start(argp, fmt);
+	buffer[0]= '#'; buffer[1]= ' ';
+	int len= 2+vsnprintf(buffer+2, sizeof(buffer)-2, fmt, argp);
+	va_end(argp);
+	if (len < sizeof(buffer)) { buffer[len++]= '\n'; }
+	else { len= sizeof(buffer); buffer[len-1]= '\n'; }
 	int wrote= write(2, buffer, len);
 	(void) wrote; /* nothing we can do about errors, since we're in a callback */
 }
@@ -516,12 +512,13 @@ static void PerlVLC_cb_log_error(const char *fmt, ...) {
 
 #if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20100)
 void PerlVLC_log_cb(void *opaque, int level, const libvlc_log_t *ctx, const char *fmt, va_list args) {
-	char buffer[1024], *pos, *lim;
+	char *pos, *lim;
 	const char *module, *file, *name, *header;
 	int fd, minlev, wrote, line, avail, len;
 	uintptr_t objid;
 	PerlVLC_Message_LogMsg_t msg;
 	PerlVLC_vlc_t *vlc= (PerlVLC_vlc_t*) opaque;
+	PERLVLC_TRACE("PerlVLC_log_cb(%d)", level);
 	
 	if (vlc->log_level > level) return;
 	memset(&msg, 0, sizeof(msg));
@@ -529,12 +526,12 @@ void PerlVLC_log_cb(void *opaque, int level, const libvlc_log_t *ctx, const char
 	lim= msg.stringdata + sizeof(msg.stringdata);
 	if (vlc->log_module || vlc->log_file || vlc->log_line) {
 		libvlc_log_get_context(ctx, &module, &file, &line);
-		if (vlc->log_module && pos + (len= strlen(module)) + 1 < lim) {
+		if (module && vlc->log_module && pos + (len= strlen(module)) + 1 < lim) {
 			memcpy(pos, module, len+1);
 			pos += len+1;
 			msg.module_strlen= len;
 		}
-		if (vlc->log_file && pos + (len= strlen(file)) + 1 < lim) {
+		if (file && vlc->log_file && pos + (len= strlen(file)) + 1 < lim) {
 			memcpy(pos, file, len+1);
 			pos += len+1;
 			msg.file_strlen= len;
@@ -543,12 +540,12 @@ void PerlVLC_log_cb(void *opaque, int level, const libvlc_log_t *ctx, const char
 	}
 	if (vlc->log_name || vlc->log_header || vlc->log_objid) {
 		libvlc_log_get_object(ctx, &name, &header, &objid);
-		if (vlc->log_name && pos + (len= strlen(name)) + 1 < lim) {
+		if (name && vlc->log_name && pos + (len= strlen(name)) + 1 < lim) {
 			memcpy(pos, name, len+1);
 			pos += len+1;
 			msg.name_strlen= len;
 		}
-		if (vlc->log_header && pos + (len= strlen(header)) + 1 < lim) {
+		if (header && vlc->log_header && pos + (len= strlen(header)) + 1 < lim) {
 			memcpy(pos, header, len+1);
 			pos += len+1;
 			msg.header_strlen= len;
@@ -559,25 +556,18 @@ void PerlVLC_log_cb(void *opaque, int level, const libvlc_log_t *ctx, const char
 	if (wrote > 0) { pos += wrote; if (pos >= lim) pos= lim-1; }
 	*pos++ = 0;
 	msg.event_id= PERLVLC_MSG_LOG;
+	msg.callback_id= (uint16_t) vlc->log_callback_id;
 	PerlVLC_send_message(vlc->event_pipe[1], &msg, ((char*)pos) - ((char*)&msg));
 }
 #endif
 
-void PerlVLC_enable_logging(PerlVLC_vlc_t *vlc, int lev,
-	bool with_module, bool with_file, bool with_line,
-	bool with_name, bool with_header, bool with_object
-) {
+void PerlVLC_set_log_cb(PerlVLC_vlc_t *vlc, int callback_id) {
+	PERLVLC_TRACE("PerlVLC_set_log_cb");
 #if ((LIBVLC_VERSION_MAJOR * 10000 + LIBVLC_VERSION_MINOR * 100 + LIBVLC_VERSION_REVISION) >= 20100)
-	PerlVLC_vlc_init_event_pipe(vlc);
-	vlc->log_module= with_module;
-	vlc->log_file= with_file;
-	vlc->log_line= with_line;
-	vlc->log_name= with_name;
-	vlc->log_header= with_header;
-	vlc->log_objid= with_object;
+	vlc->log_callback_id= callback_id;
 	libvlc_log_set(vlc->instance, &PerlVLC_log_cb, vlc);
 #else
-	croak("libvlc_log_* API not supported on this version");
+	croak("Log redirection not suppoted on this version of VLC");
 #endif
 }
 
@@ -610,7 +600,7 @@ static void* PerlVLC_video_lock_cb(void *opaque, void **planes) {
 	}
 	else {
 		/* Write message to LibVLC instance that the callback is ready and needs data */
-		lock_msg.object_id= mpinfo->object_id;
+		lock_msg.callback_id= mpinfo->callback_id;
 		lock_msg.event_id= PERLVLC_MSG_VIDEO_LOCK_EVENT;
 		if (!PerlVLC_send_message(mpinfo->event_pipe, &lock_msg, sizeof(lock_msg))) {
 			/* This also should never happen, unless event pipe was closed. */
@@ -655,7 +645,7 @@ static void PerlVLC_video_unlock_cb(void *opaque, void *picture, void * const *p
 		PerlVLC_cb_log_error("BUG: Video unlock callback received NULL opaque pointer\n");
 		return;
 	}
-	pic_msg.object_id= mpinfo->object_id;
+	pic_msg.callback_id= mpinfo->callback_id;
 	pic_msg.event_id= PERLVLC_MSG_VIDEO_UNLOCK_EVENT;
 	pic_msg.picture= (PerlVLC_picture_t *) picture;
 	if (!PerlVLC_send_message(mpinfo->event_pipe, &pic_msg, sizeof(pic_msg)))
@@ -677,7 +667,7 @@ static void PerlVLC_video_display_cb(void *opaque, void *picture) {
 		PerlVLC_cb_log_error("BUG: Video unlock callback received NULL opaque pointer\n");
 		return;
 	}
-	pic_msg.object_id= mpinfo->object_id;
+	pic_msg.callback_id= mpinfo->callback_id;
 	pic_msg.event_id= PERLVLC_MSG_VIDEO_DISPLAY_EVENT;
 	pic_msg.picture= (PerlVLC_picture_t *) picture;
 	if (!PerlVLC_send_message(mpinfo->event_pipe, &pic_msg, sizeof(pic_msg)))
@@ -704,7 +694,7 @@ static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigne
 	
 	/* Pack up arguments */
 	memset(&fmt_msg, 0, sizeof(fmt_msg));
-	fmt_msg.object_id= mpinfo->object_id;
+	fmt_msg.callback_id= mpinfo->callback_id;
 	fmt_msg.event_id= PERLVLC_MSG_VIDEO_FORMAT_EVENT;
 	for (i= 0; i < 4; i++)
 		fmt_msg.chroma[i]= chroma_p[i];
@@ -755,7 +745,7 @@ static void PerlVLC_video_cleanup_cb(void *opaque) {
 		PerlVLC_cb_log_error("BUG: Video cleanup callback received NULL opaque pointer\n");
 		return;
 	}
-	msg.object_id= mpinfo->object_id;
+	msg.callback_id= mpinfo->callback_id;
 	msg.event_id= PERLVLC_MSG_VIDEO_CLEANUP_EVENT;
 	if (!PerlVLC_send_message(mpinfo->event_pipe, &msg, sizeof(msg)))
 		/* This also should never happen, unless event pipe was closed. */
@@ -767,7 +757,8 @@ void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, bool unlock_cb, bo
 	if (format_cb || cleanup_cb)
 		croak("Can't support set_format callback on LibVLC %d.%d", LIBVLC_VERSION_MAJOR, LIBVLC_VERSION_MINOR);
 #endif
-	PerlVLC_player_init_vbuf_pipe(mpinfo);
+	if (mpinfo->vbuf_pipe[0] < 0)
+		croak("Must set vbuf_pipe handles before enabling video callbacks");
 	libvlc_video_set_callbacks(
 		mpinfo->player,
 		PerlVLC_video_lock_cb,
@@ -775,17 +766,23 @@ void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, bool unlock_cb, bo
 		display_cb? PerlVLC_video_display_cb : NULL,
 		mpinfo
 	);
+	mpinfo->video_cb_installed= 1;
 #if (LIBVLC_VERSION_MAJOR >= 2)
-	if (format_cb)
+	if (format_cb) {
 		libvlc_video_set_format_callbacks(
 			mpinfo->player,
 			PerlVLC_video_format_cb,
 			cleanup_cb? PerlVLC_video_cleanup_cb : NULL
 		);
+		mpinfo->video_format_cb_installed= 1;
+	}
 #endif
 }
 
-void PerlVLC_player_queue_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic) {
+/* Add a picture to the list held by this object.  The picture must have been
+ * wrapped with a Perl hashref prior to this call.
+ */
+void PerlVLC_player_add_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic) {
 	void *larger;
 	if (player->picture_count + 1 < player->picture_alloc) {
 		if ((larger= realloc(player->pictures, sizeof(void*) * (player->picture_alloc + 8)))) {
@@ -798,6 +795,46 @@ void PerlVLC_player_queue_picture(PerlVLC_player_t *player, PerlVLC_picture_t *p
 	player->pictures[player->picture_count++]= pic;
 	/* maintain a refcnt on the HV */
 	SvREFCNT_inc(pic->self_hv);
+	if (player->vbuf_pipe[1] >= 0)
+		PerlVLC_player_fill_picture_queue(player);
+}
+
+/* Remove a specific picture from the list held by this object.  Dies if the picture
+ * doesn't belong to this object.
+ */
+void PerlVLC_player_remove_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic) {
+	int i;
+	for (i= 0; i < player->picture_count; i++)
+		if (player->pictures[i] == pic) {
+			sv_2mortal((SV*) pic->self_hv);
+			player->pictures[i]= player->pictures[--player->picture_count];
+			return;
+		}
+	croak("picture %p is not held by player", pic);
+}
+
+/* Makes sure VLC thread has at least N pictures assigned for it to use.
+ * Dies if pipe is not opened yet or if it fails to write to the pipe.
+ * Returns the number of pictures assigned to VLC.
+ */
+int PerlVLC_player_fill_picture_queue(PerlVLC_player_t *player) {
+	PerlVLC_Message_TradePicture_t msg;
+	int i, cnt;
+	/* Queue up to 4 pictures toward VLC, assuming pipe is open */
+	if (player->vbuf_pipe[1] < 0)
+		croak("Queue is not initialized");
+	for (cnt= 0, i=0; i < player->picture_count; i++)
+		if (player->pictures[i]->held_by_vlc) ++cnt;
+	for (i= 0; cnt < 4 && i < player->picture_count; i++)
+		if (!player->pictures[i]->held_by_vlc) {
+			msg.event_id= PERLVLC_MSG_VIDEO_TRADE_PICTURE;
+			msg.picture= player->pictures[i];
+			if (!PerlVLC_send_message(player->vbuf_pipe[1], &msg, sizeof(msg)))
+				croak("Failed to send picture to VLC thread");
+			player->pictures[i]->held_by_vlc= 1;
+			cnt++;
+		}
+	return cnt;
 }
 
 /*------------------------------------------------------------------------------------------------

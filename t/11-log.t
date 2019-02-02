@@ -7,13 +7,7 @@ use VideoLAN::LibVLC;
 sub err(&) { my $code= shift; try { $code->(); '' } catch { "$_" }; }
 
 plan skip_all => 'Log redirection not supported on this version of LibVLC'
-	unless VideoLAN::LibVLC->can('libvlc_log_unset');
-
-my $buffer= pack('SC', 1, 2) . join("\0", 'file=', 'foo=bar', 'baz=0', '=blah', 'blah1234567');
-my $attrs= VideoLAN::LibVLC::_log_extract_attrs($buffer);
-is_deeply( $attrs, { level => 2, file => '', foo => 'bar', baz => 0, '' => 'blah' }, 'extract log attrs' );
-is( $buffer, 'blah1234567', 'buffer is trimmed' );
-
+	unless VideoLAN::LibVLC->can_redirect_log;
 
 my $vlc= new_ok( 'VideoLAN::LibVLC', [], 'new instance, no args' );
 
