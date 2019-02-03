@@ -1,5 +1,4 @@
 package VideoLAN::LibVLC::MediaPlayer;
-
 use strict;
 use warnings;
 use VideoLAN::LibVLC qw(
@@ -14,10 +13,18 @@ use IO::Handle;
 use Carp;
 
 # ABSTRACT: Media Player
+# VERSION
+
+=head1 SYNOPSIS
+
+  my $p= VideoLAN::LibVLC->new->new_media_player();
+  $p->media("FunnyCatVideo.mp4");
+  $p->play;
 
 =head1 DESCRIPTION
 
-This object wraps C<libvlc_media_player_t>
+This object wraps L<libvlc_media_player_t|https://www.videolan.org/developers/vlc/doc/doxygen/html/group__libvlc__media__player.html>.
+This is the primary object for media playback.
 
 =head1 ATTRIBUTES
 
@@ -246,6 +253,106 @@ sub _vbuf_pipe {
 	}
 }
 
+=head2 set_video_callbacks
+
+This method sets up the player to render into user-supplied picture buffers.
+Here's a rough overview of how it works:
+
+=over
+
+=item Prepare to Dispatch Messages
+
+VLC runs in a separate thread from the main program.  In order to handle callbacks, you need to
+pump a message queue that this module uses to ferry the events back and forth.  The most direct
+way is with
+
+  # $vlc= $player->libvlc;
+  while ($main_loop) {
+    ...
+    # dispatch each pending message
+    1 while $vlc->callback_dispatch;
+    ...
+  }
+
+If you are using an event library like AnyEvent, it can simply be
+
+  AE::io $vlc->callback_fh, 0, sub { $vlc->callback_dispatch };
+
+=item Choose Video Format
+
+Decide whether you want to force a specific video format, or use to the native format of
+the media, or a little of both.  Using the native format of the media requires VLC 2.0 or
+higher.
+
+To specify your own format, call C<set_video_callbacks> I<without> the C<format> callback, and
+then call L</set_video_format> with the desired chroma, width, height, and pitch.
+
+  $p->set_video_callbacks(display => sub { ... });
+  $p->set_video_format("RGBA", 640, 480, 640*4);
+
+To adapt to the format of the media (especially for width/height, even if you plan to force RGB
+or something) set the C<format> callback, and then call L</set_video_format> from I<within>
+that callback.  You should also allocate the pictures after setting the format.
+
+  $p->set_video_callbacks(
+    display => sub { ... },
+    format  => sub {
+      my ($p, $event)= @_;
+      $p->set_video_format("RGBA", $event->{width}, $event->{height}, $event->{width}*4);
+      # allocate pictures; see below
+    }
+  );
+
+=item Create Picture Buffers
+
+Once you know the format, you can create picture buffers for VLC to render into.
+These are instances of L<VideoLAN::LibVLC::Picture>.  If you only specify the dimensions of
+the picture buffer, it will allocate memory internally.  You may also provide the memory of
+the planes as scalar-refs, but this is likely to crash your program if you're not careful,
+and should only be done if you have special requirements like rendering into a memory-map
+(such as created by L<File::Map> or L<OpenGL::Sandbox::Buffer>).
+
+After creating a picture buffer, pass it to L<push_picture>.  This gives the internal VLC
+thread access to them.
+
+  $p->push_new_picture(id => $_) for 0..7;
+  
+  # which is shorthand for:
+  
+  for (0..7) {
+    my $pic= VideoLAN::LibVLC::Picture->new( $p->video_format->%*, id => $_ );
+    $p->push_picture($pic);
+  }
+
+Picture IDs aren't required but it helps when debugging with L</trace_pictures>.
+
+=item Handle the Lock and Unlock events
+
+The VLC thread runs asynchronous to the main Perl program.  It notifies you when it needs a new
+buffer, and when it has filled that buffer.  These events can be handled with callbacks, if you
+want.  Note that you'll need a really fast turnaround time for the C<lock> callback, and it is
+much better to queue pictures in advance.  But, you can queue in advance and still receive the
+C<lock> callback for bookkeeping purposes.  The C<unlock> callback lets you know when the VLC
+thread has filled a buffer, but it is not necessarily time to display the buffer.  Depending on
+the video codec, the images might be created in a different order than they get displayed.
+
+=item Handle the Display event
+
+The most important callback is the C<display> callback.  This tells you when it is time to show
+a picture.  This event is also the moment that a C<Picture> object becomes detached from the
+C<MediaPlayer> object.  You need to call L</push_picture> again afterward if you want to
+recycle the picture.
+
+=item Handle the Cleanup event
+
+Using the VLC 2.0 API also gives you a C<cleanup> event when VLC is done rendering pictures.
+The way the API works, you must also use the C<format> callback to be able to use the C<cleanup>
+callback.
+
+=back
+
+=cut
+
 sub _video_callbacks { $_[0]{_video_callbacks} //= {} }
 sub set_video_callbacks {
 	my $self= shift;
@@ -277,6 +384,26 @@ sub set_video_callbacks {
 	$self->_enable_video_callbacks(fileno($event_wr), $cb_id, ['lock', keys %$cur]);
 	1;
 }
+
+=head2 set_video_format
+
+  $p->set_video_format($chroma, $width, $height, $pitch, $lines, $alloc_count);
+
+If this is called without registering a C<format> callback, it will call
+C<libvlc_video_set_format> which forces VLC to rescale the pictures to your desired format.
+If called after registering a C<format> callback, it will reply to the callback with mostly
+the same effect (but after you've had the opportunity to see what the native format is).
+
+See L<VideoLAN::LibVLC::Picture> for discussion of the parameters (other than C<$alloc_count>,
+which is the number of pictures you plan to allocate).
+
+If using the callback, this should only be called in response to the callback.  You should also
+set C<$alloc_count>, and C<$lines[0..2]> and C<$pitch[0..2]>.
+
+If not using the callback, this should only be called once, and C<$lines> and C<$alloc_count>
+and C<<$pitch->[1..2]>> are ignored due to limitations of the older API.
+
+=cut
 
 sub set_video_format {
 	my ($self, $chroma, $width, $height, $pitch, $lines, $alloc_count)= @_;
@@ -328,6 +455,35 @@ sub _dispatch_callback {
 		warn "Unknown event ".$event->{event_id};
 	}
 }
+
+=head2 new_picture
+
+  my $picture= $player->new_picture( %overrides );
+
+Retun a new L<VideoLAN::LibVLC::Picture> object, defaulting to the format last registered with
+L</set_video_format>.  Any arguments to this function will be merged with those format
+parameters.
+
+=head2 push_picture
+
+  $player->push_picture($picture);
+
+Push a picture onto the queue to the VLC decoding thread.  Once pushed, you may not alter the
+picture in any way, or else risk crashing your program.  It is best to drop any reference you
+had to the picture and let the Player hold onto it until time for a C<display> event.
+
+=head2 push_new_picture
+
+A shorthand combination of the above methods.
+
+=head trace_pictures
+
+This is an attribute of the player that, when enabled, causes all exchange of pictures to be
+logged on file descriptor 2 (stderr).  Note that due to the multi-threaded nature of the VLC
+decoder, this won't be synchronized with changes to STDERR by perl, and could result in
+garbled messages in some cases.  This is only intended for debugging use.
+
+=cut
 
 sub new_picture {
 	my $self= shift;
