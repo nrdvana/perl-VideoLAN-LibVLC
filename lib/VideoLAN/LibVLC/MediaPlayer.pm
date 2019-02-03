@@ -476,7 +476,7 @@ had to the picture and let the Player hold onto it until time for a C<display> e
 
 A shorthand combination of the above methods.
 
-=head trace_pictures
+=head2 trace_pictures
 
 This is an attribute of the player that, when enabled, causes all exchange of pictures to be
 logged on file descriptor 2 (stderr).  Note that due to the multi-threaded nature of the VLC

@@ -536,9 +536,12 @@ plane(pic, idx)
 	CODE:
 		if (pic->held_by_vlc)
 			croak("Can't access planes while Picture object is held by VLC decoder thread");
-		RETVAL= (idx < 0 || idx > 3 || !pic->plane[idx])? &PL_sv_undef
+		RETVAL= (idx < 0 || idx > 3)? &PL_sv_undef
 			: pic->plane_buffer_sv[idx]? newSVsv(pic->plane_buffer_sv[idx])
-			: newRV_noinc(buffer_scalar_wrap(newSV(0), pic->plane[idx], pic->pitch[idx] * pic->lines[idx], 0, NULL, NULL));
+			: pic->plane[idx]? newRV_noinc(buffer_scalar_wrap(newSV(0),
+					(void*) ((((intptr_t)pic->plane[idx])+0x1F) & ~0x1F),
+					pic->pitch[idx] * pic->lines[idx], 0, NULL, NULL))
+			: &PL_sv_undef;
 	OUTPUT:
 		RETVAL
 
@@ -547,7 +550,7 @@ plane_pitch(pic, idx)
 	PerlVLC_picture_t *pic;
 	int idx;
 	CODE:
-		RETVAL= (idx < 0 || idx > 3 || !pic->plane[idx])? &PL_sv_undef
+		RETVAL= (idx < 0 || idx > 3 || !(pic->pitch[idx] || pic->plane_buffer_sv[idx]))? &PL_sv_undef
 			: newSViv(pic->pitch[idx]);
 	OUTPUT:
 		RETVAL
@@ -557,7 +560,7 @@ plane_lines(pic, idx)
 	PerlVLC_picture_t *pic;
 	int idx;
 	CODE:
-		RETVAL= (idx < 0 || idx > 3 || !pic->plane[idx])? &PL_sv_undef
+		RETVAL= (idx < 0 || idx > 3 || !(pic->lines[idx] || pic->plane_buffer_sv[idx]))? &PL_sv_undef
 			: newSViv(pic->lines[idx]);
 	OUTPUT:
 		RETVAL

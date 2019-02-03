@@ -13,6 +13,8 @@
 //#define PERLVLC_TRACE(x...) PerlVLC_cb_log_error(x)
 #define PERLVLC_TRACE(...) ((void)0)
 
+#define PTR_ALIGN_32B(x) ((void*)( (((intptr_t)(x)) + 0x1F) & ~(intptr_t)0x1F ))
+
 static void PerlVLC_cb_log_error(const char *fmt, ...);
 static void* PerlVLC_video_lock_cb(void *data, void **planes);
 static void PerlVLC_video_unlock_cb(void *data, void *picture, void * const *planes);
@@ -200,6 +202,9 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 		}
 		else
 			self.pitch[0]= SvIV(*item);
+		for (i= 0; i < 3; i++)
+			if (self.pitch[i] & 0x1F)
+				warn("pitch[%d]=%p is not a multiple of 32 as recommended by libvlc", i, self.pitch[i]);
 	}
 	if ((item= hv_fetchs(hash, "plane_lines", 0)) && *item && SvOK(*item)) {
 		if (SvROK(*item) && SvTYPE(SvRV(*item)) == SVt_PVAV) {
@@ -227,6 +232,14 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 	}
 	if ((item= hv_fetchs(hash, "id", 0)) && *item && SvOK(*item))
 		self.id= SvIV(*item);
+	/* If pitch and lines are not set on plane[0], come up with some defaults.
+	 * If it is supposed to be a multi-plane image and those pitches/lines aren't
+	 * set, the user gets to keep the pieces.
+	 */
+	if (!self.pitch[0])
+		self.pitch[0]= (self.width + 0x1F) & ~0x1F;
+	if (!self.lines[0])
+		self.lines[0]= self.height;
 
 	/* now make a copy into dynamic memory */
 	Newx(ret, 1, PerlVLC_picture_t);
@@ -235,11 +248,8 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 	for (i= 0; i < PERLVLC_PICTURE_PLANES; i++) {
 		if (ret->plane_buffer_sv[i])
 			SvREFCNT_inc(ret->plane_buffer_sv[i]);
-		else {
-			pitch= ret->pitch[i] ? ret->pitch[i] : (ret->width + 0x1F) & ~0x1F;
-			lines= ret->lines[i] ? ret->lines[i] : ret->height;
-			Newx(ret->plane[i], pitch * lines, char);
-		}
+		else if (ret->pitch[i] && ret->lines[i])
+			Newx(ret->plane[i], ret->pitch[i] * ret->lines[i] + 0x1F, char); // address gets 32-byte aligned
 	}
 	PERLVLC_TRACE("plane pointers: %p %p %p", ret->plane[0], ret->plane[1], ret->plane[2]);
 	return ret;
@@ -557,13 +567,16 @@ static void* PerlVLC_video_lock_cb(void *opaque, void **planes) {
 		else {
 			picture= pic_msg.picture;
 			for (i= 0; i < 3; i++)
-				planes[i]= picture->plane_buffer_sv[i]? SvPVX(picture->plane_buffer_sv[i]) : picture->plane[i];
+				planes[i]= picture->plane_buffer_sv[i]? SvPVX(picture->plane_buffer_sv[i])
+					: PTR_ALIGN_32B(picture->plane[i]); // alignment to 32-bytes
+			if (!planes[1]) planes[1]= planes[0];
+			if (!planes[2]) planes[2]= planes[1];
 			if (mpinfo->trace_pictures)
-				PerlVLC_cb_log_error("video thread got picture %d", picture->id);
+				PerlVLC_cb_log_error("video thread got picture %d (%p,%p,%p)", picture->id, planes[0], planes[1], planes[2]);
 			return picture;
 		}
 	}
-	/* I'm guessing this will crash, but maybe libvlc handles it? */
+	/* LibVLC seems to handle this as a graceful failure */
 	planes[0]= NULL;
 	planes[1]= NULL;
 	planes[2]= NULL;
