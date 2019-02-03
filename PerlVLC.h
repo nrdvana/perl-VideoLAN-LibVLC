@@ -2,11 +2,8 @@
 
 struct PerlVLC_Message;
 typedef struct PerlVLC_Message PerlVLC_Message_t;
-#define PERLVLC_MSG_BUFFER_SIZE 264
-extern int PerlVLC_send_message(int fd, void *message, size_t message_size);
-extern int PerlVLC_recv_message(int fd, char *buffer, int buflen, int *bufpos);
-extern int PerlVLC_shift_message(char *buffer, int buflen, int *bufpos);
-extern SV * PerlVLC_inflate_message(PerlVLC_Message_t *msg);
+#define PERLVLC_MSG_BUFFER_SIZE 512
+SV* PerlVLC_inflate_message(void *buffer, int msglen);
 
 extern MGVTBL PerlVLC_instance_mg_vtbl;
 extern MGVTBL PerlVLC_media_mg_vtbl;
@@ -36,8 +33,6 @@ extern void PerlVLC_picture_destroy(PerlVLC_picture_t *pic);
 typedef struct PerlVLC_vlc {
 	libvlc_instance_t *instance;
 	int event_pipe[2];
-	char event_recv_buf[PERLVLC_MSG_BUFFER_SIZE];
-	int event_recv_bufpos;
 	int log_level, log_callback_id;
 	int log_module:1, log_file:1, log_line:1, log_name:1, log_header:1, log_objid:1;
 } PerlVLC_vlc_t;
@@ -57,9 +52,6 @@ typedef struct PerlVLC_player {
 	int picture_alloc;
 	PerlVLC_picture_t **pictures;
 	int vbuf_pipe[2];
-	/* these fields are for the VLC callbacks */
-	char vbuf_recv_buf[PERLVLC_MSG_BUFFER_SIZE];
-	int vbuf_recv_bufpos;
 } PerlVLC_player_t;
 
 #define PerlVLC_set_media_player_mg(obj, ptr) PerlVLC_set_mg(obj, &PerlVLC_media_player_mg_vtbl, (void*) ptr)

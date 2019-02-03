@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use Carp;
 use Scalar::Util 'weaken';
-use Socket qw( AF_UNIX SOCK_STREAM );
+use Socket qw( AF_UNIX SOCK_DGRAM );
 use IO::Handle;
 
 # ABSTRACT: Wrapper for libvlc.so
@@ -410,17 +410,17 @@ the callback.
 
 sub callback_dispatch {
 	my ($self)= @_;
-	$self->_event_pipe;
-	my $event= $self->_decode_next_event
+	# unsolved bug - I used perl recv() and it blocks.  If I use C recv() it works....
+	my $event= $self->_recv_event()
 		or return 0;
-	my $cb= $self->{_callback}{$event->callback_id};
-	$cb->($event);
+	my $cb= $self->{_callback}{$event->{callback_id}};
+	$cb->($event) if $cb;
 	return 1;
 }
 
 sub _event_pipe {
 	$_[0]{_event_pipe} //= do {
-		socketpair(my $r, my $w, AF_UNIX, SOCK_STREAM, 0)
+		socketpair(my $r, my $w, AF_UNIX, SOCK_DGRAM, 0)
 			or die "socketpair: $!";
 		$r->blocking(0);
 		# pass file handles to XS

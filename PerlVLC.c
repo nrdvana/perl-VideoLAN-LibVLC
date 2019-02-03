@@ -57,7 +57,6 @@ SV * PerlVLC_wrap_instance(libvlc_instance_t *instance) {
 	vlc->instance= instance;
 	vlc->event_pipe[0]= -1;
 	vlc->event_pipe[1]= -1;
-	vlc->event_recv_bufpos= 0;
 	PerlVLC_set_instance_mg(self, vlc);
 	return self;
 }
@@ -306,11 +305,8 @@ void PerlVLC_picture_destroy(PerlVLC_picture_t *pic) {
 
 /* changes here should be kept in sync with PERLVLC_MSG_BUFFER_SIZE in header */
 #define PERLVLC_MSG_HEADER \
-	uint16_t stream_marker; \
+	uint16_t event_id; \
 	uint16_t callback_id; \
-	uint8_t  event_id; \
-	uint8_t  payload_len; \
-	uint16_t stream_check;
 
 typedef struct PerlVLC_Message {
 	PERLVLC_MSG_HEADER
@@ -325,7 +321,7 @@ typedef struct PerlVLC_Message_LogMsg {
 	uint8_t file_strlen;
 	uint8_t name_strlen;
 	uint8_t header_strlen;
-	char stringdata[255-12];
+	char stringdata[];
 } PerlVLC_Message_LogMsg_t;
 
 typedef struct PerlVLC_Message_TradePicture {
@@ -343,131 +339,73 @@ typedef struct PerlVLC_Message_ImgFmt {
 	unsigned allocated;
 } PerlVLC_Message_ImgFmt_t;
 
-int PerlVLC_send_message(int fd, void *message, size_t message_size) {
-	PERLVLC_TRACE("PerlVLC_send_message(%d, %d bytes)", fd, (int)message_size);
-	PerlVLC_Message_t *msg= (PerlVLC_Message_t *) message;
-	int ofs= 0, wrote;
-	if (message_size - sizeof(PerlVLC_Message_t) > 255) {
-		PerlVLC_cb_log_error("BUG: PerlVLC message exceeds protocol size");
-		return;
-	}
-	msg->payload_len= (uint8_t) (message_size - sizeof(PerlVLC_Message_t));
-	/* these help identify the start of messages, in case something goes wrong */
-	msg->stream_marker= 0xF0F1;
-	msg->stream_check= PERLVLC_MSG_STREAM_CHECK(msg);
-
-	wrote= send(fd, message, message_size, 0);
-	while (wrote < message_size) {
-		/* errors, nonblocking file handle, or closed file */
-		if (wrote <= 0) return 0;
-		/* else made some progress, and try again */
-		ofs += wrote;
-		wrote= send(fd, ((char*) message) + ofs, message_size - ofs, 0);
-	}
-	return 1;
-}
-
-int PerlVLC_recv_message(int fd, char *buffer, int buflen, int *bufpos) {
-	int pos= *bufpos, got, search= 0;
-	PerlVLC_Message_t *msg;
-	while (1) {
-		/* read more until we have a full header */
-		while (pos < sizeof(PerlVLC_Message_t)) {
-			got= recv(fd, buffer+pos, buflen-pos, 0);
-			PERLVLC_TRACE("PerlVLC_recv_message  recv(%d,%p,%d)=%d", fd, buffer+pos, buflen-pos, got);
-			if (got <= 0) {
-				*bufpos= pos;
-				return 0;
-			}
-			pos+= got;
-		}
-		/* Check whether header is valid before trying to read ->length */
-		msg= (PerlVLC_Message_t *) buffer;
-		if (msg->stream_marker != PERLVLC_MSG_STREAM_MARKER
-			|| !msg->event_id
-			|| msg->event_id > PERLVLC_MSG_EVENT_MAX
-			|| msg->stream_check != PERLVLC_MSG_STREAM_CHECK(msg)
-		) {
-			/* If head is not valid, it means corruption of the message stream!  Shouldn't happen... */
-			warn("Corrupted message received!  Searching for next.");
-			for (search= 0; search < pos-1; search++)
-				if (*(uint16_t*)(buffer+search) == PERLVLC_MSG_STREAM_MARKER) break;
-			/* shift buffer over so that first byte is the marker we found, or pos itself. */
-			memmove(buffer, buffer+search, pos-search);
-			pos -= search;
-			continue;
-		}
-		/* Read more of it until we have it all */
-		while (pos < sizeof(*msg) + msg->payload_len) {
-			got= recv(fd, buffer+pos, buflen-pos, 0);
-			PERLVLC_TRACE("PerlVLC_recv_message  recv(%d,%p,%d)=%d", fd, buffer+pos, buflen-pos, got);
-			if (got <= 0) {
-				*bufpos= pos;
-				return 0;
-			}
-			pos+= got;
-		}
-		*bufpos= pos;
-		PERLVLC_TRACE("PerlVLC_recv_message = %d bytes", (int) sizeof(*msg)+msg->payload_len);
-		return 1;
-	}
-}
-
-int PerlVLC_shift_message(char *buffer, int buflen, int *bufpos) {
-	PerlVLC_Message_t *msg= (PerlVLC_Message_t *) buffer;
-	int len= sizeof(*msg) + msg->payload_len;
-	memmove(buffer, buffer + len, *bufpos - len);
-	(*bufpos) -= len;
-}
-
-SV* PerlVLC_inflate_message(PerlVLC_Message_t *msg) {
+SV* PerlVLC_inflate_message(void *buffer, int msglen) {
 	HV *obj, *ret= (HV*) sv_2mortal((SV*) newHV());
 	AV *plane, *pitch, *lines;
-	char *pos;
+	char *pos, *lim;
 	int i;
+	PerlVLC_Message_t *msg= (PerlVLC_Message_t*) buffer;
 	PerlVLC_Message_LogMsg_t *logmsg;
 	PerlVLC_Message_TradePicture_t *picmsg;
 	PerlVLC_Message_ImgFmt_t *fmtmsg;
-	
+
+	if (msglen < sizeof(PerlVLC_Message_t))
+		croak("Message too short (%d < %ld)", msglen, sizeof(PerlVLC_Message_t));
 	switch (msg->event_id) {
 	case PERLVLC_MSG_LOG:
 		{
+			if (msglen < sizeof(PerlVLC_Message_LogMsg_t)+1)
+				croak("Message too short (%d < %ld)", msglen, sizeof(PerlVLC_Message_LogMsg_t));
 			logmsg= (PerlVLC_Message_LogMsg_t *) msg;
 			pos= logmsg->stringdata;
+			lim= ((char*)buffer) + msglen;
 			if (logmsg->line)
 				hv_stores(ret, "line", newSViv(logmsg->line));
 			if (logmsg->objid)
 				hv_stores(ret, "objid", newSViv(logmsg->objid));
 			if (logmsg->module_strlen) {
+				if (pos + logmsg->module_strlen + 1 >= lim)
+					croak("Message too short");
 				hv_stores(ret, "module", newSVpvn(pos, logmsg->module_strlen));
 				pos += logmsg->module_strlen+1;
 			}
 			if (logmsg->file_strlen) {
+				if (pos + logmsg->file_strlen + 1 >= lim)
+					croak("Message too short");
 				hv_stores(ret, "file", newSVpvn(pos, logmsg->file_strlen));
 				pos += logmsg->file_strlen+1;
 			}
 			if (logmsg->name_strlen) {
+				if (pos + logmsg->name_strlen + 1 >= lim)
+					croak("Message too short");
 				hv_stores(ret, "name", newSVpvn(pos, logmsg->name_strlen));
 				pos += logmsg->name_strlen+1;
 			}
 			if (logmsg->header_strlen) {
+				if (pos + logmsg->header_strlen + 1 >= lim)
+					croak("Message too short");
 				hv_stores(ret, "header", newSVpvn(pos, logmsg->header_strlen));
 				pos += logmsg->header_strlen+1;
 			}
+			lim[-1]= '\0'; // for strlen safety
 			hv_stores(ret, "message", newSVpvn(pos, strlen(pos)));
 		}
 		if (0) {
-	case PERLVLC_MSG_VIDEO_DISPLAY_EVENT:
-			picmsg= (PerlVLC_Message_TradePicture_t *) msg;
-			picmsg->picture->held_by_vlc= 0;
 	case PERLVLC_MSG_VIDEO_TRADE_PICTURE:
 	case PERLVLC_MSG_VIDEO_UNLOCK_EVENT:
+	case PERLVLC_MSG_VIDEO_DISPLAY_EVENT:
+			if (msglen < sizeof(PerlVLC_Message_TradePicture_t))
+				croak("Message too short (%d < %ld)", msglen, sizeof(PerlVLC_Message_TradePicture_t));
 			picmsg= (PerlVLC_Message_TradePicture_t *) msg;
+			if (msg->event_id == PERLVLC_MSG_VIDEO_DISPLAY_EVENT)
+				picmsg->picture->held_by_vlc= 0;
 			/* The picture knows its own HV, so create a new ref to that */
 			hv_stores(ret, "picture", newRV_inc((SV*) picmsg->picture->self_hv));
 		}
 		if (0) {
 	case PERLVLC_MSG_VIDEO_FORMAT_EVENT:
+			if (msglen < sizeof(PerlVLC_Message_ImgFmt_t))
+				croak("Message too short (%d < %ld)", msglen, sizeof(PerlVLC_Message_TradePicture_t));
 			fmtmsg= (PerlVLC_Message_ImgFmt_t *) msg;
 			hv_stores(ret, "chroma", newSVpvn(fmtmsg->chroma, 4));
 			hv_stores(ret, "width", newSViv(fmtmsg->width));
@@ -516,48 +454,51 @@ void PerlVLC_log_cb(void *opaque, int level, const libvlc_log_t *ctx, const char
 	const char *module, *file, *name, *header;
 	int fd, minlev, wrote, line, avail, len;
 	uintptr_t objid;
-	PerlVLC_Message_LogMsg_t msg;
+	char buffer[PERLVLC_MSG_BUFFER_SIZE];
+	PerlVLC_Message_LogMsg_t *msg= (PerlVLC_Message_LogMsg_t*) buffer;
 	PerlVLC_vlc_t *vlc= (PerlVLC_vlc_t*) opaque;
-	PERLVLC_TRACE("PerlVLC_log_cb(%d)", level);
+	PERLVLC_TRACE("PerlVLC_log_cb(%s, ...) @ %d", fmt, level);
 	
 	if (vlc->log_level > level) return;
-	memset(&msg, 0, sizeof(msg));
-	pos= msg.stringdata;
-	lim= msg.stringdata + sizeof(msg.stringdata);
+	memset(msg, 0, sizeof(*msg));
+	pos= msg->stringdata;
+	lim= buffer + sizeof(buffer);
 	if (vlc->log_module || vlc->log_file || vlc->log_line) {
 		libvlc_log_get_context(ctx, &module, &file, &line);
 		if (module && vlc->log_module && pos + (len= strlen(module)) + 1 < lim) {
 			memcpy(pos, module, len+1);
 			pos += len+1;
-			msg.module_strlen= len;
+			msg->module_strlen= len;
 		}
 		if (file && vlc->log_file && pos + (len= strlen(file)) + 1 < lim) {
 			memcpy(pos, file, len+1);
 			pos += len+1;
-			msg.file_strlen= len;
+			msg->file_strlen= len;
 		}
-		msg.line= line;
+		msg->line= line;
 	}
 	if (vlc->log_name || vlc->log_header || vlc->log_objid) {
 		libvlc_log_get_object(ctx, &name, &header, &objid);
 		if (name && vlc->log_name && pos + (len= strlen(name)) + 1 < lim) {
 			memcpy(pos, name, len+1);
 			pos += len+1;
-			msg.name_strlen= len;
+			msg->name_strlen= len;
 		}
 		if (header && vlc->log_header && pos + (len= strlen(header)) + 1 < lim) {
 			memcpy(pos, header, len+1);
 			pos += len+1;
-			msg.header_strlen= len;
+			msg->header_strlen= len;
 		}
-		msg.objid= objid;
+		msg->objid= objid;
 	}
 	wrote= vsnprintf(pos, lim-pos, fmt, args);
+//	PERLVLC_TRACE("sprintf into %ld bytes = %d", lim-pos, wrote);
 	if (wrote > 0) { pos += wrote; if (pos >= lim) pos= lim-1; }
 	*pos++ = 0;
-	msg.event_id= PERLVLC_MSG_LOG;
-	msg.callback_id= (uint16_t) vlc->log_callback_id;
-	PerlVLC_send_message(vlc->event_pipe[1], &msg, ((char*)pos) - ((char*)&msg));
+	msg->event_id= PERLVLC_MSG_LOG;
+	msg->callback_id= (uint16_t) vlc->log_callback_id;
+	wrote= send(vlc->event_pipe[1], buffer, pos - buffer, 0);
+//	PERLVLC_TRACE("send(%d, %p, %d, 0): %d", vlc->event_pipe[1], buffer, pos - buffer, wrote);
 }
 #endif
 
@@ -590,9 +531,8 @@ static void* PerlVLC_video_lock_cb(void *opaque, void **planes) {
 	PerlVLC_player_t *mpinfo= (PerlVLC_player_t*) opaque;
 	PerlVLC_picture_t *picture;
 	int i;
-	char buf[PERLVLC_MSG_BUFFER_SIZE];
 	PerlVLC_Message_t lock_msg;
-	PerlVLC_Message_TradePicture_t *pic_msg;
+	PerlVLC_Message_TradePicture_t pic_msg;
 
 	if (!mpinfo) {
 		/* If this happens, it is a bug, and probably going to kil the program.  Warn loudly. */
@@ -602,25 +542,24 @@ static void* PerlVLC_video_lock_cb(void *opaque, void **planes) {
 		/* Write message to LibVLC instance that the callback is ready and needs data */
 		lock_msg.callback_id= mpinfo->callback_id;
 		lock_msg.event_id= PERLVLC_MSG_VIDEO_LOCK_EVENT;
-		if (!PerlVLC_send_message(mpinfo->event_pipe, &lock_msg, sizeof(lock_msg))) {
+		if (send(mpinfo->event_pipe, &lock_msg, sizeof(lock_msg), 0) <= 0) {
 			/* This also should never happen, unless event pipe was closed. */
 			PerlVLC_cb_log_error("BUG: Video callback can't send event\n");
-			/* Might still have a spare buffer to use in the other pipe, though. */
+			/* Might still have a spare buffer to use in the other pipe, though, so continue. */
 		}
 		
 		i= 0;
-		pic_msg= (PerlVLC_Message_TradePicture_t *) buf;
-		if (!PerlVLC_recv_message(mpinfo->vbuf_pipe[0], buf, sizeof(buf), &i)) {
+		if (recv(mpinfo->vbuf_pipe[0], &pic_msg, sizeof(pic_msg), 0) <= 0) {
 			/* Should never happen, but could if pipe was closed before video thread stopped. */
 			PerlVLC_cb_log_error("BUG: Video callback can't receive picture\n");
 		}
-		else if (pic_msg->event_id != PERLVLC_MSG_VIDEO_TRADE_PICTURE) {
+		else if (pic_msg.event_id != PERLVLC_MSG_VIDEO_TRADE_PICTURE) {
 			/* Should never happen, but could if pipe was closed before video thread stopped. */
 			PerlVLC_cb_log_error("BUG: Video callback received mesage ID %d but expected %d\n",
-				pic_msg->event_id, PERLVLC_MSG_VIDEO_TRADE_PICTURE);
+				pic_msg.event_id, PERLVLC_MSG_VIDEO_TRADE_PICTURE);
 		}
 		else {
-			picture= pic_msg->picture;
+			picture= pic_msg.picture;
 			for (i= 0; i < 3; i++) planes[i]= picture->plane[i];
 			return picture;
 		}
@@ -642,15 +581,15 @@ static void PerlVLC_video_unlock_cb(void *opaque, void *picture, void * const *p
 	char buf[128];
 	if (!mpinfo) {
 		/* If this happens, it is a bug, and probably going to kil the program.  Warn loudly. */
-		PerlVLC_cb_log_error("BUG: Video unlock callback received NULL opaque pointer\n");
+		PerlVLC_cb_log_error("BUG: Video unlock callback received NULL opaque pointer");
 		return;
 	}
 	pic_msg.callback_id= mpinfo->callback_id;
 	pic_msg.event_id= PERLVLC_MSG_VIDEO_UNLOCK_EVENT;
 	pic_msg.picture= (PerlVLC_picture_t *) picture;
-	if (!PerlVLC_send_message(mpinfo->event_pipe, &pic_msg, sizeof(pic_msg)))
+	if (send(mpinfo->event_pipe, &pic_msg, sizeof(pic_msg), 0) <= 0)
 		/* This also should never happen, unless event pipe was closed. */
-		PerlVLC_cb_log_error("BUG: Video unlock callback can't send event\n");
+		PerlVLC_cb_log_error("BUG: Video unlock callback can't send event");
 }
 
 /* The VLC decoder calls this when it is time to display one of the pictures.
@@ -664,15 +603,15 @@ static void PerlVLC_video_display_cb(void *opaque, void *picture) {
 	char buf[128];
 	if (!mpinfo) {
 		/* If this happens, it is a bug, and probably going to kil the program.  Warn loudly. */
-		PerlVLC_cb_log_error("BUG: Video unlock callback received NULL opaque pointer\n");
+		PerlVLC_cb_log_error("BUG: Video unlock callback received NULL opaque pointer");
 		return;
 	}
 	pic_msg.callback_id= mpinfo->callback_id;
 	pic_msg.event_id= PERLVLC_MSG_VIDEO_DISPLAY_EVENT;
 	pic_msg.picture= (PerlVLC_picture_t *) picture;
-	if (!PerlVLC_send_message(mpinfo->event_pipe, &pic_msg, sizeof(pic_msg)))
+	if (send(mpinfo->event_pipe, &pic_msg, sizeof(pic_msg), 0) <= 0)
 		/* This also should never happen, unless event pipe was closed. */
-		PerlVLC_cb_log_error("BUG: Video unlock callback can't send event\n");
+		PerlVLC_cb_log_error("BUG: Video unlock callback can't send event");
 }
 
 /* The VLC decoder calls this when it knows the format of the media.
@@ -688,7 +627,7 @@ static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigne
 
 	if (!mpinfo) {
 		/* If this happens, it is a bug, and probably going to kil the program.  Warn loudly. */
-		PerlVLC_cb_log_error("BUG: Video format callback received NULL opaque pointer\n");
+		PerlVLC_cb_log_error("BUG: Video format callback received NULL opaque pointer");
 		return 0;
 	}
 	
@@ -706,18 +645,18 @@ static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigne
 	}
 
 	/* Send event to main thread */
-	if (!PerlVLC_send_message(mpinfo->event_pipe, &fmt_msg, sizeof(fmt_msg))) {
+	if (send(mpinfo->event_pipe, &fmt_msg, sizeof(fmt_msg), 0) <= 0) {
 		/* If user has closed the event pipe, just accept the params */
 		return 0;
 	}
 
 	/* Wait for response */
 	i= 0;
-	if (!PerlVLC_recv_message(mpinfo->vbuf_pipe[0], (char*) &fmt_msg, sizeof(fmt_msg), &i)
+	if (recv(mpinfo->vbuf_pipe[0], (char*) &fmt_msg, sizeof(fmt_msg), 0) <= 0
 		|| fmt_msg.event_id != PERLVLC_MSG_VIDEO_FORMAT_EVENT
 	) {
 		/* If this happens, it is a bug, and probably going to kil the program.  Warn loudly. */
-		PerlVLC_cb_log_error("BUG: Video format callback did not get valid response\n");
+		PerlVLC_cb_log_error("BUG: Video format callback did not get valid response");
 		return 0;
 	}
 
@@ -742,14 +681,14 @@ static void PerlVLC_video_cleanup_cb(void *opaque) {
 	PerlVLC_Message_t msg;
 	if (!mpinfo) {
 		/* If this happens, it is a bug, and probably going to kil the program.  Warn loudly. */
-		PerlVLC_cb_log_error("BUG: Video cleanup callback received NULL opaque pointer\n");
+		PerlVLC_cb_log_error("BUG: Video cleanup callback received NULL opaque pointer");
 		return;
 	}
 	msg.callback_id= mpinfo->callback_id;
 	msg.event_id= PERLVLC_MSG_VIDEO_CLEANUP_EVENT;
-	if (!PerlVLC_send_message(mpinfo->event_pipe, &msg, sizeof(msg)))
+	if (send(mpinfo->event_pipe, &msg, sizeof(msg), 0) <= 0)
 		/* This also should never happen, unless event pipe was closed. */
-		PerlVLC_cb_log_error("BUG: Video cleanup callback can't send event\n");
+		PerlVLC_cb_log_error("BUG: Video cleanup callback can't send event");
 }
 
 void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, bool unlock_cb, bool display_cb, bool format_cb, bool cleanup_cb) {
@@ -829,7 +768,7 @@ int PerlVLC_player_fill_picture_queue(PerlVLC_player_t *player) {
 		if (!player->pictures[i]->held_by_vlc) {
 			msg.event_id= PERLVLC_MSG_VIDEO_TRADE_PICTURE;
 			msg.picture= player->pictures[i];
-			if (!PerlVLC_send_message(player->vbuf_pipe[1], &msg, sizeof(msg)))
+			if (send(player->vbuf_pipe[1], &msg, sizeof(msg), 0) <= 0)
 				croak("Failed to send picture to VLC thread");
 			player->pictures[i]->held_by_vlc= 1;
 			cnt++;

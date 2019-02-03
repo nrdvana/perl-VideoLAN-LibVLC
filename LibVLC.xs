@@ -100,19 +100,27 @@ _set_event_pipe(vlc, read_fd, write_fd)
 		vlc->event_pipe[1]= write_fd;
 
 SV *
-_decode_next_event(vlc)
+_recv_event(vlc)
 	PerlVLC_vlc_t *vlc
 	INIT:
-		int len;
+		int got;
+		char buf[PERLVLC_MSG_BUFFER_SIZE];
 	CODE:
-		if (vlc->event_pipe[0] < 0)
-			croak("No event pipe configured");
-		if (!PerlVLC_recv_message(vlc->event_pipe[0], vlc->event_recv_buf, sizeof(vlc->event_recv_buf), &vlc->event_recv_bufpos))
-			RETVAL= &PL_sv_undef;
-		else {
-			RETVAL= PerlVLC_inflate_message((PerlVLC_Message_t *) vlc->event_recv_buf);
-			PerlVLC_shift_message(vlc->event_recv_buf, sizeof(vlc->event_recv_buf), &vlc->event_recv_bufpos);
-		}
+		got= recv(vlc->event_pipe[0], buf, sizeof(buf), 0);
+		RETVAL= (got > 0)? PerlVLC_inflate_message(buf, got) : &PL_sv_undef;
+	OUTPUT:
+		RETVAL
+
+SV *
+_inflate_event(vlc, buffer)
+	PerlVLC_vlc_t *vlc
+	SV *buffer;
+	INIT:
+		STRLEN len;
+		char *buf;
+	CODE:
+		buf= SvPV(buffer, len);
+		RETVAL= PerlVLC_inflate_message(buffer, len);
 	OUTPUT:
 		RETVAL
 
