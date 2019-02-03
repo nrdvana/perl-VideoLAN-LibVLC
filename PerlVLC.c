@@ -10,8 +10,8 @@
 
 #include "PerlVLC.h"
 
-#define PERLVLC_TRACE(x...) PerlVLC_cb_log_error(x)
-//#define PERLVLC_TRACE(...) ((void)0)
+//#define PERLVLC_TRACE(x...) PerlVLC_cb_log_error(x)
+#define PERLVLC_TRACE(...) ((void)0)
 
 static void PerlVLC_cb_log_error(const char *fmt, ...);
 static void* PerlVLC_video_lock_cb(void *data, void **planes);

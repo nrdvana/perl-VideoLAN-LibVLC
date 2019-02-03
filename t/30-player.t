@@ -2,7 +2,7 @@ use strict;
 use warnings;
 use Test::More;
 use FindBin;
-use Time::HiRes 'time';
+use Time::HiRes 'sleep';
 use File::Spec::Functions 'catdir';
 my $datadir= catdir($FindBin::Bin, 'data');
 
@@ -11,7 +11,7 @@ use_ok('VideoLAN::LibVLC::MediaPlayer') || BAIL_OUT;
 # wrap with function to help free vars in correct order
 sub test {
 	my $vlc= new_ok( 'VideoLAN::LibVLC', [], 'init libvlc' );
-	$vlc->log(sub { diag explain @_; }, { level => 0 });
+	$vlc->log(sub { note $_[0]->{message}; }, { level => 0 });
 
 	my $player= new_ok( 'VideoLAN::LibVLC::MediaPlayer', [ libvlc => $vlc ], 'player instance' );
 	1 while $vlc->callback_dispatch;
@@ -21,12 +21,15 @@ sub test {
 
 	is( $player->time, undef, 'time = undef' );
 	is( $player->position, undef, 'position = undef' );
-	is( $player->will_play, 1, 'will_play = 1' );
 	ok( $player->play, 'play' );
-	1 while $vlc->callback_dispatch;
+	for (my $i= 0; !$player->is_playing && $i < 10; $i++) {
+		sleep .5;
+		1 while $vlc->callback_dispatch;
+	}
 	sleep .5;
 	$player->pause;
 	1 while $vlc->callback_dispatch;
+	is( $player->will_play, 1, 'will_play = 1' );
 	ok( $player->time > 0, 'time > 0' );
 	ok( $player->position > 0, 'position > 0' );
 

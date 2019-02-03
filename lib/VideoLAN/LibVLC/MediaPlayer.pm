@@ -180,7 +180,7 @@ Requires libvlc 1.1.1
 
 =cut
 
-*play  = *VideoLAN::LibVLC::libvlc_media_player_play;
+sub play { VideoLAN::LibVLC::libvlc_media_player_play(shift) == 0 }
 *pause = *VideoLAN::LibVLC::libvlc_media_player_pause;
 *stop  = *VideoLAN::LibVLC::libvlc_media_player_stop;
 *set_pause = *VideoLAN::LibVLC::libvlc_media_player_set_pause
