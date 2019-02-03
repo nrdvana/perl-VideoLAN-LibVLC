@@ -3,6 +3,14 @@
 struct PerlVLC_Message;
 typedef struct PerlVLC_Message PerlVLC_Message_t;
 #define PERLVLC_MSG_BUFFER_SIZE 512
+#define PERLVLC_MSG_LOG                 1
+#define PERLVLC_MSG_VIDEO_LOCK_EVENT    2
+#define PERLVLC_MSG_VIDEO_TRADE_PICTURE 3
+#define PERLVLC_MSG_VIDEO_UNLOCK_EVENT  4
+#define PERLVLC_MSG_VIDEO_DISPLAY_EVENT 5
+#define PERLVLC_MSG_VIDEO_FORMAT_EVENT  6
+#define PERLVLC_MSG_VIDEO_CLEANUP_EVENT 7
+#define PERLVLC_MSG_EVENT_MAX           7
 SV* PerlVLC_inflate_message(void *buffer, int msglen);
 
 extern MGVTBL PerlVLC_instance_mg_vtbl;
@@ -46,6 +54,7 @@ typedef struct PerlVLC_player {
 	libvlc_media_player_t *player;
 	bool video_cb_installed;
 	bool video_format_cb_installed;
+	bool trace_pictures;
 	int callback_id;
 	int event_pipe;
 	int picture_count;
@@ -57,10 +66,16 @@ typedef struct PerlVLC_player {
 #define PerlVLC_set_media_player_mg(obj, ptr) PerlVLC_set_mg(obj, &PerlVLC_media_player_mg_vtbl, (void*) ptr)
 #define PerlVLC_get_media_player_mg(obj)      ((PerlVLC_player_t*) PerlVLC_get_mg(obj, &PerlVLC_media_player_mg_vtbl))
 extern SV * PerlVLC_wrap_media_player(libvlc_media_player_t *player);
+#define PERLVLC_VIDEO_CALLBACK_LOCK     1
+#define PERLVLC_VIDEO_CALLBACK_UNLOCK   2
+#define PERLVLC_VIDEO_CALLBACK_DISPLAY  4
+#define PERLVLC_VIDEO_CALLBACK_FORMAT   8
+#define PERLVLC_VIDEO_CALLBACK_CLEANUP 16
+void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, int which);
 void PerlVLC_player_add_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic);
 void PerlVLC_player_remove_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic);
 int PerlVLC_player_fill_picture_queue(PerlVLC_player_t *player);
-
+void PerlVLC_video_reply_format(PerlVLC_player_t *player, char *chroma, int width, int height, SV *pitch, SV *lines, int alloc_count);
 #define PerlVLC_set_media_mg(obj, ptr)        PerlVLC_set_mg(obj, &PerlVLC_media_mg_vtbl, (void*) ptr)
 #define PerlVLC_get_media_mg(obj)             ((libvlc_media_t*) PerlVLC_get_mg(obj, &PerlVLC_media_mg_vtbl))
 extern SV * PerlVLC_wrap_media(libvlc_media_t *player);

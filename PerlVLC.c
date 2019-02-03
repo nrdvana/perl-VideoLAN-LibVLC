@@ -163,7 +163,7 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 	HV *hash, *plane_hash;
 	SV **item;
 	AV *av;
-	int i;
+	int i, pitch, lines;
 	const char *chroma;
 	STRLEN len;
 	memset(&self, 0, sizeof(self));
@@ -225,6 +225,8 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 			self.plane[i]= SvPVX(self.plane_buffer_sv[i]);
 		}
 	}
+	if ((item= hv_fetchs(hash, "id", 0)) && *item && SvOK(*item))
+		self.id= SvIV(*item);
 
 	/* now make a copy into dynamic memory */
 	Newx(ret, 1, PerlVLC_picture_t);
@@ -233,9 +235,13 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 	for (i= 0; i < PERLVLC_PICTURE_PLANES; i++) {
 		if (ret->plane_buffer_sv[i])
 			SvREFCNT_inc(ret->plane_buffer_sv[i]);
-		else if (ret->pitch[i] && ret->lines[i])
-			Newx(ret->plane[i], ret->pitch[i]*ret->lines[i], char);
+		else {
+			pitch= ret->pitch[i] ? ret->pitch[i] : (ret->width + 0x1F) & ~0x1F;
+			lines= ret->lines[i] ? ret->lines[i] : ret->height;
+			Newx(ret->plane[i], pitch * lines, char);
+		}
 	}
+	PERLVLC_TRACE("plane pointers: %p %p %p", ret->plane[0], ret->plane[1], ret->plane[2]);
 	return ret;
 }
 
@@ -290,18 +296,6 @@ void PerlVLC_picture_destroy(PerlVLC_picture_t *pic) {
  *
  * All messages start with a little header struct that frames the messages for reliable transfer.
  */
-
-#define PERLVLC_MSG_STREAM_MARKER      0xF0F1
-#define PERLVLC_MSG_STREAM_CHECK(m)    ((uint16_t) (0x101 * (m)->event_id * (m)->payload_len))
-#define PERLVLC_MSG_LOG                 1
-#define PERLVLC_MSG_VIDEO_LOCK_EVENT    2
-#define PERLVLC_MSG_VIDEO_TRADE_PICTURE 3
-#define PERLVLC_MSG_VIDEO_UNLOCK_EVENT  4
-#define PERLVLC_MSG_VIDEO_DISPLAY_EVENT 5
-#define PERLVLC_MSG_VIDEO_FORMAT_EVENT  6
-#define PERLVLC_MSG_VIDEO_CLEANUP_EVENT 7
-
-#define PERLVLC_MSG_EVENT_MAX           7
 
 /* changes here should be kept in sync with PERLVLC_MSG_BUFFER_SIZE in header */
 #define PERLVLC_MSG_HEADER \
@@ -549,6 +543,8 @@ static void* PerlVLC_video_lock_cb(void *opaque, void **planes) {
 		}
 		
 		i= 0;
+		if (mpinfo->trace_pictures)
+			PerlVLC_cb_log_error("video thread wants picture");
 		if (recv(mpinfo->vbuf_pipe[0], &pic_msg, sizeof(pic_msg), 0) <= 0) {
 			/* Should never happen, but could if pipe was closed before video thread stopped. */
 			PerlVLC_cb_log_error("BUG: Video callback can't receive picture\n");
@@ -560,7 +556,10 @@ static void* PerlVLC_video_lock_cb(void *opaque, void **planes) {
 		}
 		else {
 			picture= pic_msg.picture;
-			for (i= 0; i < 3; i++) planes[i]= picture->plane[i];
+			for (i= 0; i < 3; i++)
+				planes[i]= picture->plane_buffer_sv[i]? SvPVX(picture->plane_buffer_sv[i]) : picture->plane[i];
+			if (mpinfo->trace_pictures)
+				PerlVLC_cb_log_error("video thread got picture %d", picture->id);
 			return picture;
 		}
 	}
@@ -587,6 +586,8 @@ static void PerlVLC_video_unlock_cb(void *opaque, void *picture, void * const *p
 	pic_msg.callback_id= mpinfo->callback_id;
 	pic_msg.event_id= PERLVLC_MSG_VIDEO_UNLOCK_EVENT;
 	pic_msg.picture= (PerlVLC_picture_t *) picture;
+	if (mpinfo->trace_pictures)
+		PerlVLC_cb_log_error("video thread filled picture %d", pic_msg.picture->id);
 	if (send(mpinfo->event_pipe, &pic_msg, sizeof(pic_msg), 0) <= 0)
 		/* This also should never happen, unless event pipe was closed. */
 		PerlVLC_cb_log_error("BUG: Video unlock callback can't send event");
@@ -609,6 +610,8 @@ static void PerlVLC_video_display_cb(void *opaque, void *picture) {
 	pic_msg.callback_id= mpinfo->callback_id;
 	pic_msg.event_id= PERLVLC_MSG_VIDEO_DISPLAY_EVENT;
 	pic_msg.picture= (PerlVLC_picture_t *) picture;
+	if (mpinfo->trace_pictures)
+		PerlVLC_cb_log_error("video thread says display picture %d", pic_msg.picture->id);
 	if (send(mpinfo->event_pipe, &pic_msg, sizeof(pic_msg), 0) <= 0)
 		/* This also should never happen, unless event pipe was closed. */
 		PerlVLC_cb_log_error("BUG: Video unlock callback can't send event");
@@ -655,7 +658,7 @@ static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigne
 	if (recv(mpinfo->vbuf_pipe[0], (char*) &fmt_msg, sizeof(fmt_msg), 0) <= 0
 		|| fmt_msg.event_id != PERLVLC_MSG_VIDEO_FORMAT_EVENT
 	) {
-		/* If this happens, it is a bug, and probably going to kil the program.  Warn loudly. */
+		/* If this happens, it is a bug, and probably going to kill the program.  Warn loudly. */
 		PerlVLC_cb_log_error("BUG: Video format callback did not get valid response");
 		return 0;
 	}
@@ -667,7 +670,7 @@ static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigne
 	*height_p= fmt_msg.height;
 	for (i= 0; i < 3; i++) {
 		pitch[i]= fmt_msg.plane_pitch[i];
-		lines[i]=   fmt_msg.plane_lines[i];
+		lines[i]= fmt_msg.plane_lines[i];
 	}
 	/* Return the number allocated */
 	return fmt_msg.allocated;
@@ -691,9 +694,12 @@ static void PerlVLC_video_cleanup_cb(void *opaque) {
 		PerlVLC_cb_log_error("BUG: Video cleanup callback can't send event");
 }
 
-void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, bool unlock_cb, bool display_cb, bool format_cb, bool cleanup_cb) {
+void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, int which) {
+	/* currently, the only optional callbacks are unlock and cleanup, because
+	 * the others need internal defaults in order to maintain a coherent API
+	 */
 #if (LIBVLC_VERSION_MAJOR < 2)
-	if (format_cb || cleanup_cb)
+	if (which & (PERLVLC_VIDEO_CALLBACK_FORMAT|PERLVLC_VIDEO_CALLBACK_CLEANUP))
 		croak("Can't support set_format callback on LibVLC %d.%d", LIBVLC_VERSION_MAJOR, LIBVLC_VERSION_MINOR);
 #endif
 	if (mpinfo->vbuf_pipe[0] < 0)
@@ -701,21 +707,70 @@ void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, bool unlock_cb, bo
 	libvlc_video_set_callbacks(
 		mpinfo->player,
 		PerlVLC_video_lock_cb,
-		unlock_cb? PerlVLC_video_unlock_cb : NULL,
-		display_cb? PerlVLC_video_display_cb : NULL,
+		which & PERLVLC_VIDEO_CALLBACK_UNLOCK? PerlVLC_video_unlock_cb : NULL,
+		PerlVLC_video_display_cb,
 		mpinfo
 	);
 	mpinfo->video_cb_installed= 1;
 #if (LIBVLC_VERSION_MAJOR >= 2)
-	if (format_cb) {
+	if (which & (PERLVLC_VIDEO_CALLBACK_FORMAT|PERLVLC_VIDEO_CALLBACK_CLEANUP)) {
 		libvlc_video_set_format_callbacks(
 			mpinfo->player,
 			PerlVLC_video_format_cb,
-			cleanup_cb? PerlVLC_video_cleanup_cb : NULL
+			which & PERLVLC_VIDEO_CALLBACK_CLEANUP? PerlVLC_video_cleanup_cb : NULL
 		);
 		mpinfo->video_format_cb_installed= 1;
 	}
 #endif
+}
+
+/* Send a reply to the video format callback, telling it what format parameters
+ * the frames should be decoded as. */
+void PerlVLC_video_reply_format(
+	PerlVLC_player_t *player,
+	char *chroma, int width, int height,
+	SV *pitch, SV *lines,
+	int alloc_count
+) {
+	PerlVLC_Message_ImgFmt_t msg;
+	AV *av;
+	SV **item;
+	int i;
+
+	memset(&msg, 0, sizeof(msg));
+	if (player->vbuf_pipe[1] < 0)
+		croak("video buffer pipe not initialized yet");
+	if (strlen(chroma) != 4)
+		croak("chroma must be 4 characters");
+	memcpy(msg.chroma, chroma, 4);
+	msg.width= width;
+	msg.height= height;
+	if (SvOK(pitch) && !SvROK(pitch))
+		msg.plane_pitch[0]= SvIV(pitch);
+	else if (SvROK(pitch) && SvTYPE(SvRV(pitch)) == SVt_PVAV) {
+		av= (AV*) SvRV(pitch);
+		for (i= 0; i < 3 && i <= av_len(av); i++) {
+			if ((item= av_fetch(av, i, 0)) && *item && SvOK(*item) && !SvROK(*item))
+				msg.plane_pitch[i]= SvIV(*item);
+			else
+				croak("pitch[%d] must be a number", i);
+		}
+	}
+	else croak("Can't process 'pitch': expected number or array of numbers");
+	if (SvOK(lines) && !SvROK(lines))
+		msg.plane_lines[0]= SvIV(lines);
+	else if (SvROK(lines) && SvTYPE(SvRV(lines)) == SVt_PVAV) {
+		av= (AV*) SvRV(lines);
+		for (i= 0; i < 3 && i <= av_len(av); i++) {
+			if ((item= av_fetch(av, i, 0)) && *item && SvOK(*item) && !SvROK(*item))
+				msg.plane_lines[i]= SvIV(*item);
+			else
+				croak("lines[%d] must be a number", i);
+		}
+	}
+	msg.allocated= alloc_count;
+	msg.event_id= PERLVLC_MSG_VIDEO_FORMAT_EVENT;
+	send(player->vbuf_pipe[1], &msg, sizeof(msg), 0);
 }
 
 /* Add a picture to the list held by this object.  The picture must have been
@@ -723,14 +778,24 @@ void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, bool unlock_cb, bo
  */
 void PerlVLC_player_add_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic) {
 	void *larger;
-	if (player->picture_count + 1 < player->picture_alloc) {
+	int i;
+	PERLVLC_TRACE("PerlVLC_player_add_picture(%p, %p)", player, pic);
+	if (!pic->self_hv) croak("BUG: picture lacks self_hv");
+	/* make sure it isn't already in the list */
+	for (i= 0; i < player->picture_count; i++)
+		if (player->pictures[i] == pic) {
+			PERLVLC_TRACE(" picture exists in list");
+			return;
+		}
+	/* grow list if needed */
+	if (player->picture_count >= player->picture_alloc) {
+		PERLVLC_TRACE("grow list");
 		if ((larger= realloc(player->pictures, sizeof(void*) * (player->picture_alloc + 8)))) {
 			player->pictures= (PerlVLC_picture_t**) larger;
 			player->picture_alloc += 8;
 		}
 		else croak("Can't grow picture array");
 	}
-	if (!pic->self_hv) croak("BUG: picture lacks self_hv");
 	player->pictures[player->picture_count++]= pic;
 	/* maintain a refcnt on the HV */
 	SvREFCNT_inc(pic->self_hv);
@@ -757,6 +822,7 @@ void PerlVLC_player_remove_picture(PerlVLC_player_t *player, PerlVLC_picture_t *
  * Returns the number of pictures assigned to VLC.
  */
 int PerlVLC_player_fill_picture_queue(PerlVLC_player_t *player) {
+	PERLVLC_TRACE("PerlVLC_player_fill_picture_queue");
 	PerlVLC_Message_TradePicture_t msg;
 	int i, cnt;
 	/* Queue up to 4 pictures toward VLC, assuming pipe is open */
@@ -764,10 +830,12 @@ int PerlVLC_player_fill_picture_queue(PerlVLC_player_t *player) {
 		croak("Queue is not initialized");
 	for (cnt= 0, i=0; i < player->picture_count; i++)
 		if (player->pictures[i]->held_by_vlc) ++cnt;
-	for (i= 0; cnt < 4 && i < player->picture_count; i++)
+	for (i= 0; i < player->picture_count; i++)
 		if (!player->pictures[i]->held_by_vlc) {
 			msg.event_id= PERLVLC_MSG_VIDEO_TRADE_PICTURE;
 			msg.picture= player->pictures[i];
+			if (player->trace_pictures)
+				PerlVLC_cb_log_error("give video thread picture %d", msg.picture->id);
 			if (send(player->vbuf_pipe[1], &msg, sizeof(msg), 0) <= 0)
 				croak("Failed to send picture to VLC thread");
 			player->pictures[i]->held_by_vlc= 1;

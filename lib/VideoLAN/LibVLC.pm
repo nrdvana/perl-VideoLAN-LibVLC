@@ -80,12 +80,15 @@ our %EXPORT_TAGS= (
   video_projection_t => [qw( VIDEO_PROJECTION_CUBEMAP_LAYOUT_STANDARD
     VIDEO_PROJECTION_EQUIRECTANGULAR VIDEO_PROJECTION_RECTANGULAR )],
 # END GENERATED XS CONSTANT LIST
-	functions => [qw(
-		
-	)],
+  perlvlc_event_id => [qw( PERLVLC_MSG_VIDEO_LOCK_EVENT PERLVLC_MSG_VIDEO_UNLOCK_EVENT
+    PERLVLC_MSG_VIDEO_DISPLAY_EVENT PERLVLC_MSG_VIDEO_FORMAT_EVENT
+    PERLVLC_MSG_VIDEO_CLEANUP_EVENT )],
+  functions => [qw(
+  
+  )],
 );
 push @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{$_} }
-	for grep /_t$/, keys %EXPORT_TAGS;
+	for 'perlvlc_event_id', grep /_t$/, keys %EXPORT_TAGS;
 our @EXPORT_OK= ( @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{functions} } );
 $EXPORT_TAGS{all}= \@EXPORT_OK;
 
@@ -449,5 +452,15 @@ sub _unregister_callback {
 	my ($self, $id)= @_;
 	delete $self->{_callback}{$id};
 }
+
+sub libvlc_video_set_callbacks {
+	my ($player, $lock_cb, $unlock_cb, $display_cb, $opaque)= @_;
+	$player->set_video_callbacks(lock => $lock_cb, unlock => $unlock_cb, display => $display_cb, opaque => $opaque);
+}
+sub libvlc_video_set_format_callbacks {
+	my ($player, $format_cb, $cleanup_cb)= @_;
+	$player->set_video_callbacks(format => $format_cb, cleanup => $cleanup_cb);
+}
+
 
 1;

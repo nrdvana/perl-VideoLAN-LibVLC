@@ -332,6 +332,14 @@ libvlc_media_player_set_video_title_display(player, position, timeout)
 #endif
 
 void
+libvlc_video_set_format(player, chroma, width, height, pitch)
+	libvlc_media_player_t *player
+	char *chroma
+	unsigned width
+	unsigned height
+	unsigned pitch
+
+void
 _const_unavailable()
 	PPCODE:
 		croak("Symbol not available on this version of LibVLC");
@@ -397,6 +405,43 @@ _set_vbuf_pipe(player, read_fd, write_fd)
 		player->vbuf_pipe[0]= read_fd;
 		player->vbuf_pipe[1]= write_fd;
 
+void
+_enable_video_callbacks(player, event_fd, cb_id, which_list)
+	PerlVLC_player_t *player
+	int event_fd
+	int cb_id
+	AV *which_list
+	INIT:
+		int i, which= 0;
+		SV **item;
+		char *s;
+	PPCODE:
+		player->callback_id= cb_id;
+		player->event_pipe= event_fd;
+		for (i= 0; i <= av_len(which_list); i++)
+			if ((item= av_fetch(which_list, i, 0)) && *item && SvOK(*item)) {
+				s= SvPV_nolen(*item);
+				if      (0 == strcmp(s, "lock"))    which |= PERLVLC_VIDEO_CALLBACK_LOCK;
+				else if (0 == strcmp(s, "unlock"))  which |= PERLVLC_VIDEO_CALLBACK_UNLOCK;
+				else if (0 == strcmp(s, "display")) which |= PERLVLC_VIDEO_CALLBACK_DISPLAY;
+				else if (0 == strcmp(s, "format"))  which |= PERLVLC_VIDEO_CALLBACK_FORMAT;
+				else if (0 == strcmp(s, "cleanup")) which |= PERLVLC_VIDEO_CALLBACK_CLEANUP;
+				else warn("No such callback %s", s);
+			}
+		PerlVLC_enable_video_callbacks(player, which);
+
+void
+_reply_video_format(player, chroma, width, height, pitch, lines, alloc_count= 0)
+	PerlVLC_player_t *player
+	char *chroma
+	int width
+	int height
+	SV *pitch
+	SV *lines
+	int alloc_count
+	PPCODE:
+		PerlVLC_video_reply_format(player, chroma, width, height, pitch, lines, alloc_count);
+
 PerlVLC_picture_t *
 pop_picture(player)
 	PerlVLC_player_t *player
@@ -429,6 +474,16 @@ fill_queue(player)
 	OUTPUT:
 		RETVAL
 
+int
+trace_pictures(player, ...)
+	PerlVLC_player_t *player;
+	CODE:
+		if (items > 1)
+			player->trace_pictures= SvIV(ST(1));
+		RETVAL= player->trace_pictures;
+	OUTPUT:
+		RETVAL
+
 MODULE = VideoLAN::LibVLC              PACKAGE = VideoLAN::LibVLC::Picture
 
 PerlVLC_picture_t *
@@ -441,9 +496,11 @@ new(classname, args)
 		RETVAL
 
 int
-id(pic)
+id(pic, ...)
 	PerlVLC_picture_t *pic;
 	CODE:
+		if (items > 1)
+			pic->id= SvIV(ST(1));
 		RETVAL= pic->id;
 	OUTPUT:
 		RETVAL
@@ -649,4 +706,11 @@ BOOT:
   newXS("VideoLAN::LibVLC::META_DISCTOTAL", XS_VideoLAN__LibVLC__const_unavailable, file);
 #endif
 # END GENERATED BOOT CONSTANTS
+  newCONSTSUB(stash, "PERLVLC_MSG_LOG"                 , newSViv(PERLVLC_MSG_LOG                ));
+  newCONSTSUB(stash, "PERLVLC_MSG_VIDEO_LOCK_EVENT"    , newSViv(PERLVLC_MSG_VIDEO_LOCK_EVENT   ));
+  newCONSTSUB(stash, "PERLVLC_MSG_VIDEO_TRADE_PICTURE" , newSViv(PERLVLC_MSG_VIDEO_TRADE_PICTURE));
+  newCONSTSUB(stash, "PERLVLC_MSG_VIDEO_UNLOCK_EVENT"  , newSViv(PERLVLC_MSG_VIDEO_UNLOCK_EVENT ));
+  newCONSTSUB(stash, "PERLVLC_MSG_VIDEO_DISPLAY_EVENT" , newSViv(PERLVLC_MSG_VIDEO_DISPLAY_EVENT));
+  newCONSTSUB(stash, "PERLVLC_MSG_VIDEO_FORMAT_EVENT"  , newSViv(PERLVLC_MSG_VIDEO_FORMAT_EVENT ));
+  newCONSTSUB(stash, "PERLVLC_MSG_VIDEO_CLEANUP_EVENT" , newSViv(PERLVLC_MSG_VIDEO_CLEANUP_EVENT));
 #

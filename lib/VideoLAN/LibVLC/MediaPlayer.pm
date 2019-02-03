@@ -2,8 +2,14 @@ package VideoLAN::LibVLC::MediaPlayer;
 
 use strict;
 use warnings;
-use VideoLAN::LibVLC;
+use VideoLAN::LibVLC qw(
+ PERLVLC_MSG_VIDEO_LOCK_EVENT
+ PERLVLC_MSG_VIDEO_UNLOCK_EVENT
+ PERLVLC_MSG_VIDEO_DISPLAY_EVENT
+ PERLVLC_MSG_VIDEO_FORMAT_EVENT
+ PERLVLC_MSG_VIDEO_CLEANUP_EVENT );
 use Socket qw( AF_UNIX SOCK_STREAM );
+use Scalar::Util 'weaken';
 use IO::Handle;
 use Carp;
 
@@ -238,6 +244,103 @@ sub _vbuf_pipe {
 		$_[0]->_set_vbuf_pipe(fileno($r), fileno($w));
 		[$r, $w];
 	}
+}
+
+sub _video_callbacks { $_[0]{_video_callbacks} //= {} }
+sub set_video_callbacks {
+	my $self= shift;
+	my %opts= @_ == 1? %{ $_[0] } : @_;
+	$self->{libvlc} or croak "Can't set up callbacks without reference to VLC instance";
+	!$self->is_playing or croak "Can't change callbacks during playback";
+	my $cur= $self->_video_callbacks;
+	# Can't specify 'cleanup' without 'format'
+	!$opts{cleanup} || ($opts{format} || $cur->{format})
+		or croak "Can't specify 'cleanup' without 'format'";
+	for (qw( lock unlock display cleanup format )) {
+		my $name= $_;
+		if (exists $opts{$_}) {
+			$cur->{$_}= $opts{$_};
+		} else {
+			delete $cur->{$_};
+		}
+	}
+	
+	# Make sure we've registered with libvlc's event pipe
+	$self->_vbuf_pipe;
+	my $event_wr= $self->{libvlc}->_event_pipe->[1];
+	weaken($self);
+	my $cb_id= $self->{_callback_id} //= $self->{libvlc}->_register_callback(sub {
+		$self && $self->_dispatch_callback(@_);
+	});
+	
+	# Now register the callbacks in the XS code
+	$self->_enable_video_callbacks(fileno($event_wr), $cb_id, ['lock', keys %$cur]);
+	1;
+}
+
+sub set_video_format {
+	my ($self, $chroma, $width, $height, $pitch, $lines, $alloc_count)= @_;
+	!$self->{video_format}
+		or croak "Video format already set";
+	if ($self->_video_callbacks->{format}) {
+		$self->_reply_video_format($chroma, $width, $height, $pitch, $lines, $alloc_count);
+	}
+	else {
+		$self->VideoLAN::LibVLC::libvlc_video_set_format($chroma, $width, $height, $pitch);
+	}
+	$self->{video_format}{chroma}= $chroma;
+	$self->{video_format}{width}=  $width;
+	$self->{video_format}{height}= $height;
+	$self->{video_format}{plane_pitch}= $pitch;
+	$self->{video_format}{plane_lines}= $lines;
+	1;
+}
+
+my %event_id_to_name= (
+	PERLVLC_MSG_VIDEO_LOCK_EVENT()    => 'lock',
+	PERLVLC_MSG_VIDEO_UNLOCK_EVENT()  => 'unlock',
+	PERLVLC_MSG_VIDEO_DISPLAY_EVENT() => 'display',
+	PERLVLC_MSG_VIDEO_FORMAT_EVENT()  => 'format',
+	PERLVLC_MSG_VIDEO_CLEANUP_EVENT() => 'cleanup',
+);
+
+sub _dispatch_callback {
+	my ($self, $event)= @_;
+	my $opaque= $self->_video_callbacks->{opaque} // $self;
+	if (my $cbname= $event_id_to_name{$event->{event_id}}) {
+		my $cb= $self->_video_callbacks->{$cbname};
+		$cb && $cb->($opaque, $event);
+		# Lock callback should always call fill_queue
+		if ($cbname eq 'lock') {
+			my $queued= $self->fill_queue;
+			carp "Only $queued pictures available to VLC" if $queued < 3;
+		}
+		# format callback should always record the picture settings
+		elsif ($cbname eq 'format') {
+			$self->{video_format}{$_}= $event->{$_} for qw( chroma width height plane_pitch plane_lines );
+			# and if there wasn't a callback, it should reply to the message
+			if (!$cb) {
+				$cb->_reply_video_format(@{$event}{qw( chroma width height plane_pitch plane_lines )});
+			}
+		}
+	}
+	else {
+		warn "Unknown event ".$event->{event_id};
+	}
+}
+
+sub new_picture {
+	my $self= shift;
+	my $fmt= $self->{video_format}
+		or croak "Video format is not yet known/set";
+	$fmt= { %$fmt, @_ == 1? %{$_[0]} : @_ }
+		if @_;
+	VideoLAN::LibVLC::Picture->new($fmt);
+}
+
+sub push_new_picture {
+	my $self= shift;
+	$self->push_picture($self->new_picture(@_));
 }
 
 1;
