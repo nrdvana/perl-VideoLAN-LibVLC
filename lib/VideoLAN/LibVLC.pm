@@ -237,6 +237,10 @@ sub video_filters { my $self= shift; $self->{video_filters} ||= [ $self->libvlc_
 sub audio_filter_list { @{ shift->audio_filters } }
 sub video_filter_list { @{ shift->video_filters } }
 
+=head2 can_redirect_log
+
+Whether or not this version of libvlc supports redirecting the log.
+
 =head2 log
 
   # get
@@ -399,6 +403,11 @@ sub new_media_player {
 	VideoLAN::LibVLC::MediaPlayer->new(libvlc => $self, @attrs);
 }
 
+=head2 callback_fh
+
+The file handle of the read-end of the callback pipe.  Listen on this file handle
+to know when to call L</callback_dispatch>.
+
 =head2 callback_dispatch
 
 Read any pending callback messages from the pipe(s), and execute the callback.
@@ -410,6 +419,8 @@ handle, and then call this method to unpack the arguments and deliver them to
 the callback.
 
 =cut
+
+sub callback_fh { shift->_event_pipe->[0] }
 
 sub callback_dispatch {
 	my ($self)= @_;

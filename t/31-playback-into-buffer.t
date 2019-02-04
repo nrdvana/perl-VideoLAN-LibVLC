@@ -22,7 +22,7 @@ sub test_custom_framesize {
 	my $pic;
 	$player->trace_pictures(1);
 	$player->set_video_callbacks(display => sub { $pic= $_[1]{picture}; $_[0]->push_picture($pic); });
-	$player->set_video_format('RGBA', 64, 64, 64*4);
+	$player->set_video_format(chroma => 'RGBA', width => 64, height => 64, plane_pitch => 64*4);
 	$player->push_new_picture(id => $_) for 0..7;
 	ok( $player->play, 'play' );
 	for (my $i= 0; !$pic && $i < 100; $i++) {
@@ -53,7 +53,7 @@ sub test_native_framesize {
 		'format'=> sub {
 			my ($p, $event)= @_;
 			diag explain $event;
-			$p->set_video_format(@{$event}{qw( chroma width height plane_pitch plane_lines )}, 8);
+			$p->set_video_format(%$event, alloc_count => 8);
 			$p->push_new_picture(id => $_) for 0..7;
 		},
 		cleanup => sub { $done++ },

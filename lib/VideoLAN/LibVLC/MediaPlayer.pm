@@ -353,6 +353,8 @@ callback.
 
 =cut
 
+sub video_format { $_[0]{video_format} //= {} }
+
 sub _video_callbacks { $_[0]{_video_callbacks} //= {} }
 sub set_video_callbacks {
 	my $self= shift;
@@ -387,7 +389,8 @@ sub set_video_callbacks {
 
 =head2 set_video_format
 
-  $p->set_video_format($chroma, $width, $height, $pitch, $lines, $alloc_count);
+  $p->set_video_format(%opts); # must include: chroma width height
+                               # may include: plane_pitch plane_lines alloc_count
 
 If this is called without registering a C<format> callback, it will call
 C<libvlc_video_set_format> which forces VLC to rescale the pictures to your desired format.
@@ -406,20 +409,21 @@ and C<<$pitch->[1..2]>> are ignored due to limitations of the older API.
 =cut
 
 sub set_video_format {
-	my ($self, $chroma, $width, $height, $pitch, $lines, $alloc_count)= @_;
+	my $self= shift;
+	my $opts= @_ == 1? $_[0] : { @_ };
+	defined $opts->{$_} or croak "Require video format setting '$_'"
+		for qw( chroma width height );
 	!$self->{video_format}
 		or croak "Video format already set";
 	if ($self->_video_callbacks->{format}) {
-		$self->_reply_video_format($chroma, $width, $height, $pitch, $lines, $alloc_count);
+		$self->_reply_video_format(@{$opts}{qw( chroma width height plane_pitch plane_lines alloc_count )});
 	}
 	else {
-		$self->VideoLAN::LibVLC::libvlc_video_set_format($chroma, $width, $height, $pitch);
+		$opts->{plane_pitch} //= ( ($opts->{width} * 4 + 0x1F) & ~0x1F );
+		$opts->{plane_pitch}= $opts->{plane_pitch}[0] if ref $opts->{plane_pitch};
+		$self->VideoLAN::LibVLC::libvlc_video_set_format(@{$opts}{qw( chroma width height plne_pitch )});
 	}
-	$self->{video_format}{chroma}= $chroma;
-	$self->{video_format}{width}=  $width;
-	$self->{video_format}{height}= $height;
-	$self->{video_format}{plane_pitch}= $pitch;
-	$self->{video_format}{plane_lines}= $lines;
+	$self->{video_format}{$_}= $opts->{$_} for qw( chroma width height plane_pitch plane_lines alloc_count );
 	1;
 }
 
