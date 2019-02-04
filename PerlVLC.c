@@ -204,7 +204,7 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 			self.pitch[0]= SvIV(*item);
 		for (i= 0; i < 3; i++)
 			if (self.pitch[i] & 0x1F)
-				warn("pitch[%d]=%p is not a multiple of 32 as recommended by libvlc", i, self.pitch[i]);
+				warn("pitch[%d]=%d is not a multiple of 32 as recommended by libvlc", i, self.pitch[i]);
 	}
 	if ((item= hv_fetchs(hash, "plane_lines", 0)) && *item && SvOK(*item)) {
 		if (SvROK(*item) && SvTYPE(SvRV(*item)) == SVt_PVAV) {

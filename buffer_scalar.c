@@ -5,8 +5,8 @@
 
 #define BUFFER_SCALAR_READONLY 1
 #define BUFFER_SCALAR_UTF8 2
-typedef intptr_t buffer_scalar_callback_data[8];
-typedef void (*buffer_scalar_free_fn)(SV *var, void *address, size_t length, buffer_scalar_callback_data callback_data);
+typedef intptr_t buffer_scalar_callback_data_t[8];
+typedef void (*buffer_scalar_free_fn)(SV *var, void *address, size_t length, buffer_scalar_callback_data_t callback_data);
 
 #ifndef SvPV_free
 #	define SvPV_free(arg) sv_setpvn_mg(arg, NULL, 0);
@@ -20,14 +20,13 @@ struct buffer_scalar_info {
 	char* address;
 	size_t length;
 	int flags;
-	buffer_scalar_callback_data callback_data;
+	buffer_scalar_callback_data_t callback_data;
 	buffer_scalar_free_fn destructor;
 };
 
 static int buffer_scalar_mg_write(pTHX_ SV *sv, MAGIC* mg);
 static int buffer_scalar_mg_clear(pTHX_ SV *sv, MAGIC *mg);
 static int buffer_scalar_mg_free(pTHX_ SV *sv, MAGIC *mg);
-static int buffer_scalar_mg_dup(pTHX_ SV *sv, MAGIC *mg);
 
 #ifdef MGf_LOCAL
 static int buffer_scalar_mg_local(pTHX_ SV* var, MAGIC* mg) {
@@ -169,19 +168,20 @@ static struct buffer_scalar_info* get_sv_magic(pTHX_ SV* var) {
 
 static SV* buffer_scalar_wrap(
 	SV *target, void *address, size_t length, int flags,
-	buffer_scalar_callback_data callback_data,
+	buffer_scalar_callback_data_t cbdata,
 	buffer_scalar_free_fn destructor
 ) {
 	struct buffer_scalar_info *info;
-	if ((info= get_sv_magic(target)))
-		croak("Scalar is already bound to a foreign buffer");
+	if (SvMAGICAL(target) && mg_find(target, PERL_MAGIC_uvar))
+		croak("Scalar already has scalar magic applied");
 	info= add_sv_magic(target);
 	info->address= address;
 	info->length= length;
 	info->flags= flags;
-	if (callback_data)
-		memcpy(info->callback_data, callback_data, sizeof(buffer_scalar_callback_data));
+	if (cbdata)
+		memcpy(info->callback_data, cbdata, sizeof(buffer_scalar_callback_data_t));
 	info->destructor= destructor;
+	reset_var(target, info);
 	return target;
 }
 
