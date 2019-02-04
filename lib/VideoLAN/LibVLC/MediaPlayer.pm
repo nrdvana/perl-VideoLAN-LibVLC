@@ -437,27 +437,45 @@ my %event_id_to_name= (
 
 sub _dispatch_callback {
 	my ($self, $event)= @_;
-	my $opaque= $self->_video_callbacks->{opaque} // $self;
+	my $opaque= $self->_video_callbacks->{opaque} || $self;
 	if (my $cbname= $event_id_to_name{$event->{event_id}}) {
-		my $cb= $self->_video_callbacks->{$cbname};
-		$cb && $cb->($opaque, $event);
-		# Lock callback should always call fill_queue
-		if ($cbname eq 'lock') {
-			my $queued= $self->fill_queue;
-			carp "Only $queued pictures available to VLC" if $queued < 3;
-		}
-		# format callback should always record the picture settings
-		elsif ($cbname eq 'format') {
-			$self->{video_format}{$_}= $event->{$_} for qw( chroma width height plane_pitch plane_lines );
-			# and if there wasn't a callback, it should reply to the message
-			if (!$cb) {
-				$cb->_reply_video_format(@{$event}{qw( chroma width height plane_pitch plane_lines )});
-			}
-		}
+		$self->can('_dispatch_cb_'.$cbname)->($self, $event, $self->_video_callbacks->{$cbname}, $opaque);
 	}
 	else {
 		warn "Unknown event ".$event->{event_id};
 	}
+}
+
+sub _dispatch_cb_format {
+	my ($self, $event, $cb, $opaque)= @_;
+	$cb? $cb->($opaque, $event)
+	# if there wasn't a callback, it should reply to the message
+	: $self->set_video_format($event);
+}
+
+sub _dispatch_cb_lock {
+	my ($self, $event, $cb, $opaque)= @_;
+	$cb->($opaque, $event) if $cb;
+	# check how many are queued for decoder thread
+	my $queued= $self->fill_queue;
+	carp "Only $queued pictures available to VLC" if $queued < 3;
+}
+
+sub _dispatch_cb_unlock {
+	my ($self, $event, $cb, $opaque)= @_;
+	$cb->($opaque, $event) if $cb;
+}
+
+sub _dispatch_cb_display {
+	my ($self, $event, $cb, $opaque)= @_;
+	# 'display' callback needs to detch the picture object from the player
+	$self->remove_picture($event->{picture});
+	$cb->($opaque, $event) if $cb;
+}
+
+sub _dispatch_cb_cleanup {
+	my ($self, $event, $cb, $opaque)= @_;
+	$cb->($opaque, $event) if $cb;
 }
 
 =head2 new_picture

@@ -401,7 +401,7 @@ SV* PerlVLC_inflate_message(void *buffer, int msglen) {
 			if (msglen < sizeof(PerlVLC_Message_TradePicture_t))
 				croak("Message too short (%d < %ld)", msglen, sizeof(PerlVLC_Message_TradePicture_t));
 			picmsg= (PerlVLC_Message_TradePicture_t *) msg;
-			if (msg->event_id == PERLVLC_MSG_VIDEO_DISPLAY_EVENT)
+			if (picmsg->event_id == PERLVLC_MSG_VIDEO_DISPLAY_EVENT)
 				picmsg->picture->held_by_vlc= 0;
 			/* The picture knows its own HV, so create a new ref to that */
 			hv_stores(ret, "picture", newRV_inc((SV*) picmsg->picture->self_hv));
@@ -793,6 +793,9 @@ void PerlVLC_player_add_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic
 	void *larger;
 	int i;
 	PERLVLC_TRACE("PerlVLC_player_add_picture(%p, %p)", player, pic);
+	if (player->trace_pictures)
+		PerlVLC_cb_log_error("add picture %d to player %p", pic->id, player);
+
 	if (!pic->self_hv) croak("BUG: picture lacks self_hv");
 	/* make sure it isn't already in the list */
 	for (i= 0; i < player->picture_count; i++)
@@ -821,6 +824,8 @@ void PerlVLC_player_add_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic
  */
 void PerlVLC_player_remove_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic) {
 	int i;
+	if (player->trace_pictures)
+		PerlVLC_cb_log_error("remove picture %d from player %p", pic->id, player);
 	for (i= 0; i < player->picture_count; i++)
 		if (player->pictures[i] == pic) {
 			sv_2mortal((SV*) pic->self_hv);
@@ -838,7 +843,6 @@ int PerlVLC_player_fill_picture_queue(PerlVLC_player_t *player) {
 	PERLVLC_TRACE("PerlVLC_player_fill_picture_queue");
 	PerlVLC_Message_TradePicture_t msg;
 	int i, cnt;
-	/* Queue up to 4 pictures toward VLC, assuming pipe is open */
 	if (player->vbuf_pipe[1] < 0)
 		croak("Queue is not initialized");
 	for (cnt= 0, i=0; i < player->picture_count; i++)

@@ -49,8 +49,8 @@ sub test_native_framesize {
 	my ($pic, $ready, $done);
 	$player->trace_pictures(1);
 	$player->set_video_callbacks(
-		display => sub { $pic= $_[1]{picture}; $_[0]->push_picture($pic); },
-		'format'=> sub {
+		display => sub { $pic= $_[1]{picture}; },
+		format => sub {
 			my ($p, $event)= @_;
 			diag explain $event;
 			$p->set_video_format(%$event, alloc_count => 8);
@@ -64,6 +64,9 @@ sub test_native_framesize {
 		1 while $vlc->callback_dispatch;
 	}
 	ok( $pic, 'received picture from display callback' );
+	is( $pic->held_by_vlc, 0, 'pic not held by vlc' );
+	ok( eval { $player->push_picture($pic); 1 }, 'push picture' );
+	is( $pic->held_by_vlc, 1, 'pic held by vlc again' );
 	$player->stop;
 	for (my $i= 0; !$done && $i < 100; $i++) {
 		sleep .05;

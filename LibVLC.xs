@@ -443,19 +443,26 @@ _reply_video_format(player, chroma, width, height, pitch, lines, alloc_count= 0)
 		PerlVLC_video_reply_format(player, chroma, width, height, pitch, lines, alloc_count);
 
 PerlVLC_picture_t *
-pop_picture(player)
+remove_picture(player, pic)
 	PerlVLC_player_t *player
+	PerlVLC_picture_t *pic
 	INIT:
 		int i;
 	CODE:
-		/* search for any picture that is not already pushed into the VLC queue */
 		RETVAL= NULL;
-		for (i= 0; i < player->picture_count; i++)
-			if (!player->pictures[i]->held_by_vlc) {
-				RETVAL= player->pictures[i];
-				PerlVLC_player_remove_picture(player, RETVAL);
-				break;
-			}
+		if (pic) {
+			if (pic->held_by_vlc)
+				croak("Picture is held by VLC decoder thread");
+			/* search for any picture that is not already pushed into the VLC queue */
+			for (i= 0; i < player->picture_count; i++)
+				if (player->pictures[i] == pic) {
+					RETVAL= pic;
+					PerlVLC_player_remove_picture(player, RETVAL);
+					break;
+				}
+			if (!RETVAL)
+				croak("Picture does not belong to this player");
+		}
 	OUTPUT:
 		RETVAL
 
@@ -562,6 +569,14 @@ plane_lines(pic, idx)
 	CODE:
 		RETVAL= (idx < 0 || idx > 3 || !(pic->lines[idx] || pic->plane_buffer_sv[idx]))? &PL_sv_undef
 			: newSViv(pic->lines[idx]);
+	OUTPUT:
+		RETVAL
+
+int
+held_by_vlc(pic)
+	PerlVLC_picture_t *pic;
+	CODE:
+		RETVAL= pic->held_by_vlc;
 	OUTPUT:
 		RETVAL
 
