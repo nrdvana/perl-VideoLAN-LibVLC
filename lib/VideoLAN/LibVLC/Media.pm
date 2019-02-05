@@ -1,11 +1,11 @@
 package VideoLAN::LibVLC::Media;
-
 use strict;
 use warnings;
 use VideoLAN::LibVLC;
 use Carp;
 
 # ABSTRACT: Playable media stream
+# VERSION
 
 =head1 DESCRIPTION
 

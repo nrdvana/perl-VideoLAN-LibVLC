@@ -13,12 +13,6 @@
 //#define PERLVLC_TRACE(x...) PerlVLC_cb_log_error(x)
 #define PERLVLC_TRACE(...) ((void)0)
 
-// Actually saw one codec say "plane 1: pitch not aligned (160%64): disabling direct rendering"
-// so I guess we're up to 64 bytes these days...
-#define PERLVLC_PLANE_PITCH_MUL 64
-#define PERLVLC_PLANE_PITCH_MASK (PERLVLC_PLANE_PITCH_MUL-1)
-#define PERLVLC_ALIGN_PLANE(x) ((void*)( (((intptr_t)(x)) + PERLVLC_PLANE_PITCH_MASK) & ~(intptr_t)PERLVLC_PLANE_PITCH_MASK ))
-
 static void PerlVLC_cb_log_error(const char *fmt, ...);
 static void* PerlVLC_video_lock_cb(void *data, void **planes);
 static void PerlVLC_video_unlock_cb(void *data, void *picture, void * const *planes);

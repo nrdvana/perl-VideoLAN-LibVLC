@@ -1,5 +1,4 @@
 package VideoLAN::LibVLC;
-
 use 5.008001;
 use strict;
 use warnings;
@@ -9,6 +8,7 @@ use Socket qw( AF_UNIX SOCK_DGRAM );
 use IO::Handle;
 
 # ABSTRACT: Wrapper for libvlc.so
+# VERSION
 
 =head1 SYNOPSIS
 
@@ -46,9 +46,8 @@ thread)
 
 =cut
 
-require Exporter;
-our @ISA = qw(Exporter);
-
+use Exporter::Extensible -exporter_setup => 1;
+our %EXPORT;
 our %EXPORT_TAGS= (
 # BEGIN GENERATED XS CONSTANT LIST
   log_level_t => [qw( LOG_LEVEL_DEBUG LOG_LEVEL_ERROR LOG_LEVEL_NOTICE
@@ -80,17 +79,17 @@ our %EXPORT_TAGS= (
   video_projection_t => [qw( VIDEO_PROJECTION_CUBEMAP_LAYOUT_STANDARD
     VIDEO_PROJECTION_EQUIRECTANGULAR VIDEO_PROJECTION_RECTANGULAR )],
 # END GENERATED XS CONSTANT LIST
-  perlvlc_event_id => [qw( PERLVLC_MSG_VIDEO_LOCK_EVENT PERLVLC_MSG_VIDEO_UNLOCK_EVENT
-    PERLVLC_MSG_VIDEO_DISPLAY_EVENT PERLVLC_MSG_VIDEO_FORMAT_EVENT
-    PERLVLC_MSG_VIDEO_CLEANUP_EVENT )],
-  functions => [qw(
-  
-  )],
 );
-push @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{$_} }
-	for 'perlvlc_event_id', grep /_t$/, keys %EXPORT_TAGS;
-our @EXPORT_OK= ( @{ $EXPORT_TAGS{constants} }, @{ $EXPORT_TAGS{functions} } );
-$EXPORT_TAGS{all}= \@EXPORT_OK;
+sub exporter_autoload_symbol {
+	my ($self, $name)= @_;
+	# allow exporting anything in all-caps, and anything starting with libvlc
+	my $sub= $self->can($name);
+	if ($sub && $name =~ /^(?:libvlc.*|[A-Z_]+)$/) {
+		return $EXPORT{$name}= $sub;
+	} else {
+		shift->next::method(@_);
+	}
+}
 
 require XSLoader;
 XSLoader::load('VideoLAN::LibVLC', $VideoLAN::LibVLC::VERSION);

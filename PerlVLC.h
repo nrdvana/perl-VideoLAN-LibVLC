@@ -19,6 +19,12 @@ extern MGVTBL PerlVLC_media_player_mg_vtbl;
 extern MGVTBL PerlVLC_picture_mg_vtbl;
 extern void* PerlVLC_get_mg(SV *obj, MGVTBL *mg_vtbl);
 
+// Actually saw one codec say "plane 1: pitch not aligned (160%64): disabling direct rendering"
+// so I guess we're up to 64 bytes these days...
+#define PERLVLC_PLANE_PITCH_MUL 64
+#define PERLVLC_PLANE_PITCH_MASK (PERLVLC_PLANE_PITCH_MUL-1)
+#define PERLVLC_ALIGN_PLANE(x) ((void*)( (((intptr_t)(x)) + PERLVLC_PLANE_PITCH_MASK) & ~(intptr_t)PERLVLC_PLANE_PITCH_MASK ))
+
 #define PERLVLC_PICTURE_PLANES 3
 typedef struct PerlVLC_picture {
 	int id;
