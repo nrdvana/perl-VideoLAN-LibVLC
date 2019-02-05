@@ -13,7 +13,11 @@
 //#define PERLVLC_TRACE(x...) PerlVLC_cb_log_error(x)
 #define PERLVLC_TRACE(...) ((void)0)
 
-#define PTR_ALIGN_32B(x) ((void*)( (((intptr_t)(x)) + 0x1F) & ~(intptr_t)0x1F ))
+// Actually saw one codec say "plane 1: pitch not aligned (160%64): disabling direct rendering"
+// so I guess we're up to 64 bytes these days...
+#define PERLVLC_PLANE_PITCH_MUL 64
+#define PERLVLC_PLANE_PITCH_MASK (PERLVLC_PLANE_PITCH_MUL-1)
+#define PERLVLC_ALIGN_PLANE(x) ((void*)( (((intptr_t)(x)) + PERLVLC_PLANE_PITCH_MASK) & ~(intptr_t)PERLVLC_PLANE_PITCH_MASK ))
 
 static void PerlVLC_cb_log_error(const char *fmt, ...);
 static void* PerlVLC_video_lock_cb(void *data, void **planes);
@@ -203,8 +207,8 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 		else
 			self.pitch[0]= SvIV(*item);
 		for (i= 0; i < 3; i++)
-			if (self.pitch[i] & 0x1F)
-				warn("pitch[%d]=%d is not a multiple of 32 as recommended by libvlc", i, self.pitch[i]);
+			if (self.pitch[i] & PERLVLC_PLANE_PITCH_MASK)
+				warn("pitch[%d]=%d is not a multiple of %d as recommended by libvlc", i, self.pitch[i], PERLVLC_PLANE_PITCH_MUL);
 	}
 	if ((item= hv_fetchs(hash, "plane_lines", 0)) && *item && SvOK(*item)) {
 		if (SvROK(*item) && SvTYPE(SvRV(*item)) == SVt_PVAV) {
@@ -237,7 +241,7 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 	 * set, the user gets to keep the pieces.
 	 */
 	if (!self.pitch[0])
-		self.pitch[0]= (self.width + 0x1F) & ~0x1F;
+		self.pitch[0]= (self.width + PERLVLC_PLANE_PITCH_MASK) & ~PERLVLC_PLANE_PITCH_MASK;
 	if (!self.lines[0])
 		self.lines[0]= self.height;
 
@@ -249,7 +253,8 @@ PerlVLC_picture_t* PerlVLC_picture_new_from_hash(SV *args) {
 		if (ret->plane_buffer_sv[i])
 			SvREFCNT_inc(ret->plane_buffer_sv[i]);
 		else if (ret->pitch[i] && ret->lines[i])
-			Newx(ret->plane[i], ret->pitch[i] * ret->lines[i] + 0x1F, char); // address gets 32-byte aligned
+			Newx(ret->plane[i], ret->pitch[i] * ret->lines[i]
+				+ PERLVLC_PLANE_PITCH_MASK /* extra for alignment */, char);
 	}
 	PERLVLC_TRACE("plane pointers: %p %p %p", ret->plane[0], ret->plane[1], ret->plane[2]);
 	return ret;
@@ -568,7 +573,7 @@ static void* PerlVLC_video_lock_cb(void *opaque, void **planes) {
 			picture= pic_msg.picture;
 			for (i= 0; i < 3; i++)
 				planes[i]= picture->plane_buffer_sv[i]? SvPVX(picture->plane_buffer_sv[i])
-					: PTR_ALIGN_32B(picture->plane[i]); // alignment to 32-bytes
+					: PERLVLC_ALIGN_PLANE(picture->plane[i]); // alignment to 32-bytes
 			if (!planes[1]) planes[1]= planes[0];
 			if (!planes[2]) planes[2]= planes[1];
 			if (mpinfo->trace_pictures)
