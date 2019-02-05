@@ -441,6 +441,18 @@ _reply_video_format(player, chroma, width, height, pitch, lines, alloc_count= 0)
 	int alloc_count
 	PPCODE:
 		PerlVLC_video_reply_format(player, chroma, width, height, pitch, lines, alloc_count);
+		player->need_format_response= 0;
+
+int
+_need_format_response(player, assign=NULL)
+	PerlVLC_player_t *player
+	SV *assign
+	CODE:
+		if (assign)
+			player->need_format_response= SvIV(assign);
+		RETVAL= player->need_format_response;
+	OUTPUT:
+		RETVAL
 
 PerlVLC_picture_t *
 remove_picture(player, pic)

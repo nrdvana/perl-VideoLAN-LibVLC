@@ -80,6 +80,8 @@ our %EXPORT_TAGS= (
     VIDEO_PROJECTION_EQUIRECTANGULAR VIDEO_PROJECTION_RECTANGULAR )],
 # END GENERATED XS CONSTANT LIST
 );
+$EXPORT_TAGS{constants}= [ map @{$EXPORT_TAGS{$_}}, grep /_t$/, keys %EXPORT_TAGS ];
+
 sub exporter_autoload_symbol {
 	my ($self, $name)= @_;
 	# allow exporting anything in all-caps, and anything starting with libvlc

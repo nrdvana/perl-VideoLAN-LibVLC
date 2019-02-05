@@ -61,6 +61,7 @@ typedef struct PerlVLC_player {
 	bool video_cb_installed;
 	bool video_format_cb_installed;
 	bool trace_pictures;
+	int need_format_response;
 	int callback_id;
 	int event_pipe;
 	int picture_count;

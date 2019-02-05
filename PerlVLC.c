@@ -308,8 +308,8 @@ void PerlVLC_picture_destroy(PerlVLC_picture_t *pic) {
 
 /* changes here should be kept in sync with PERLVLC_MSG_BUFFER_SIZE in header */
 #define PERLVLC_MSG_HEADER \
-	uint16_t event_id; \
-	uint16_t callback_id; \
+	uint32_t event_id; \
+	uint32_t callback_id; \
 
 typedef struct PerlVLC_Message {
 	PERLVLC_MSG_HEADER
@@ -417,7 +417,7 @@ SV* PerlVLC_inflate_message(void *buffer, int msglen) {
 			hv_stores(ret, "plane_lines", newRV((SV*) (lines= newAV())));
 			for (i= 0; i < 3; i++) {
 				av_push(pitch, newSViv(fmtmsg->plane_pitch[i]));
-				av_push(lines, newSViv(fmtmsg->plane_pitch[i]));
+				av_push(lines, newSViv(fmtmsg->plane_lines[i]));
 			}
 		}
 	default:
@@ -637,55 +637,74 @@ static void PerlVLC_video_display_cb(void *opaque, void *picture) {
  */
 static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigned *width_p, unsigned *height_p, unsigned *pitch, unsigned *lines) {
 	PerlVLC_player_t *mpinfo= (PerlVLC_player_t*) *opaque_p;
-	PerlVLC_Message_ImgFmt_t fmt_msg;
-	int i;
+	union {
+		PerlVLC_Message_t msg;
+		PerlVLC_Message_ImgFmt_t fmt_msg;
+		PerlVLC_Message_TradePicture_t pic_msg;
+	} msg;
+	int i, got;
 
 	if (!mpinfo) {
 		/* If this happens, it is a bug, and probably going to kil the program.  Warn loudly. */
 		PerlVLC_cb_log_error("BUG: Video format callback received NULL opaque pointer");
 		return 0;
 	}
+	if (mpinfo->trace_pictures)
+		PerlVLC_cb_log_error("format_cb: chroma=%2X%2X%2X%2X width=%d height=%d pitch=[%d,%d,%d] lines=[%d,%d,%d]",
+			chroma_p[0],chroma_p[1],chroma_p[2],chroma_p[3], *width_p, *height_p, pitch[0], pitch[1], pitch[2], lines[0], lines[1], lines[2]);
 	
 	/* Pack up arguments */
-	memset(&fmt_msg, 0, sizeof(fmt_msg));
-	fmt_msg.callback_id= mpinfo->callback_id;
-	fmt_msg.event_id= PERLVLC_MSG_VIDEO_FORMAT_EVENT;
+	memset(&msg.fmt_msg, 0, sizeof(msg.fmt_msg));
+	msg.fmt_msg.callback_id= mpinfo->callback_id;
+	msg.fmt_msg.event_id= PERLVLC_MSG_VIDEO_FORMAT_EVENT;
 	for (i= 0; i < 4; i++)
-		fmt_msg.chroma[i]= chroma_p[i];
-	fmt_msg.width= *width_p;
-	fmt_msg.height= *height_p;
+		msg.fmt_msg.chroma[i]= chroma_p[i];
+	msg.fmt_msg.width= *width_p;
+	msg.fmt_msg.height= *height_p;
 	for (i= 0; i < 3; i++) {
-		fmt_msg.plane_pitch[i]= pitch[i];
-		fmt_msg.plane_lines[i]= lines[i];
+		msg.fmt_msg.plane_pitch[i]= pitch[i];
+		msg.fmt_msg.plane_lines[i]= lines[i];
 	}
 
 	/* Send event to main thread */
-	if (send(mpinfo->event_pipe, &fmt_msg, sizeof(fmt_msg), 0) <= 0) {
-		/* If user has closed the event pipe, just accept the params */
+	if (send(mpinfo->event_pipe, &msg.fmt_msg, sizeof(msg.fmt_msg), 0) <= 0) {
+		/* If user has closed the event pipe, return failure */
 		return 0;
 	}
 
 	/* Wait for response */
 	i= 0;
-	if (recv(mpinfo->vbuf_pipe[0], (char*) &fmt_msg, sizeof(fmt_msg), 0) <= 0
-		|| fmt_msg.event_id != PERLVLC_MSG_VIDEO_FORMAT_EVENT
-	) {
-		/* If this happens, it is a bug, and probably going to kill the program.  Warn loudly. */
-		PerlVLC_cb_log_error("BUG: Video format callback did not get valid response");
-		return 0;
+	while (1) {
+		if ((got= recv(mpinfo->vbuf_pipe[0], (char*) &msg, sizeof(msg), 0)) <= 0) {
+			PerlVLC_cb_log_error("BUG: Video format callback unable to read pipe");
+			return 0;
+		}
+		else if (got == sizeof(msg.fmt_msg) && msg.msg.event_id == PERLVLC_MSG_VIDEO_FORMAT_EVENT)
+			break;
+		/* If the format callback happens mid-stream, there are probably other video
+		 * picture messages in the queue that need returned to the player. */
+		else if (got == sizeof(msg.pic_msg) && msg.msg.event_id == PERLVLC_MSG_VIDEO_TRADE_PICTURE) {
+			msg.pic_msg.picture->held_by_vlc= 0;
+			if (send(mpinfo->event_pipe, &msg.pic_msg, sizeof(msg.pic_msg), 0) < sizeof(msg.pic_msg))
+				PerlVLC_cb_log_error("BUG: format_callback: Can't return picture to player");
+		}
+		else {
+			PerlVLC_cb_log_error("BUG: Video format callback got invalid message: size=%d type=%d",
+				got, (got > sizeof(msg.msg)? msg.msg.event_id : 0));
+		}
 	}
 
 	/* Apply values back to the arguments (which are read/write) */
 	for (i= 0; i < 4; i++)
-		chroma_p[i]= fmt_msg.chroma[i];
-	*width_p= fmt_msg.width;
-	*height_p= fmt_msg.height;
+		chroma_p[i]= msg.fmt_msg.chroma[i];
+	*width_p= msg.fmt_msg.width;
+	*height_p= msg.fmt_msg.height;
 	for (i= 0; i < 3; i++) {
-		pitch[i]= fmt_msg.plane_pitch[i];
-		lines[i]= fmt_msg.plane_lines[i];
+		pitch[i]= msg.fmt_msg.plane_pitch[i];
+		lines[i]= msg.fmt_msg.plane_lines[i];
 	}
 	/* Return the number allocated */
-	return fmt_msg.allocated;
+	return msg.fmt_msg.allocated;
 }
 
 static void PerlVLC_video_cleanup_cb(void *opaque) {
@@ -747,7 +766,7 @@ void PerlVLC_video_reply_format(
 	PerlVLC_Message_ImgFmt_t msg;
 	AV *av;
 	SV **item;
-	int i;
+	int i, wrote;
 
 	memset(&msg, 0, sizeof(msg));
 	if (player->vbuf_pipe[1] < 0)
@@ -782,7 +801,11 @@ void PerlVLC_video_reply_format(
 	}
 	msg.allocated= alloc_count;
 	msg.event_id= PERLVLC_MSG_VIDEO_FORMAT_EVENT;
-	send(player->vbuf_pipe[1], &msg, sizeof(msg), 0);
+	wrote= send(player->vbuf_pipe[1], &msg, sizeof(msg), 0);
+	if (player->trace_pictures)
+		PerlVLC_cb_log_error("reply to data format callback");
+	if (wrote < sizeof(msg))
+		croak("failed to write reply to format callback: %d", wrote);
 }
 
 /* Add a picture to the list held by this object.  The picture must have been
@@ -841,22 +864,27 @@ void PerlVLC_player_remove_picture(PerlVLC_player_t *player, PerlVLC_picture_t *
 int PerlVLC_player_fill_picture_queue(PerlVLC_player_t *player) {
 	PERLVLC_TRACE("PerlVLC_player_fill_picture_queue");
 	PerlVLC_Message_TradePicture_t msg;
-	int i, cnt;
+	int i, cnt, wrote;
 	if (player->vbuf_pipe[1] < 0)
 		croak("Queue is not initialized");
 	for (cnt= 0, i=0; i < player->picture_count; i++)
 		if (player->pictures[i]->held_by_vlc) ++cnt;
-	for (i= 0; i < player->picture_count; i++)
-		if (!player->pictures[i]->held_by_vlc) {
-			msg.event_id= PERLVLC_MSG_VIDEO_TRADE_PICTURE;
-			msg.picture= player->pictures[i];
-			if (player->trace_pictures)
-				PerlVLC_cb_log_error("give video thread picture %d", msg.picture->id);
-			if (send(player->vbuf_pipe[1], &msg, sizeof(msg), 0) <= 0)
-				croak("Failed to send picture to VLC thread");
-			player->pictures[i]->held_by_vlc= 1;
-			cnt++;
-		}
+	if (player->need_format_response)
+		warn("Can't queue picture until after format response");
+	else {
+		for (i= 0; i < player->picture_count; i++)
+			if (!player->pictures[i]->held_by_vlc) {
+				msg.event_id= PERLVLC_MSG_VIDEO_TRADE_PICTURE;
+				msg.picture= player->pictures[i];
+				if (player->trace_pictures)
+					PerlVLC_cb_log_error("give video thread picture %d", msg.picture->id);
+				wrote= send(player->vbuf_pipe[1], &msg, sizeof(msg), 0);
+				if (wrote != sizeof(msg))
+					croak("Failed to send picture to VLC thread");
+				player->pictures[i]->held_by_vlc= 1;
+				cnt++;
+			}
+	}
 	return cnt;
 }
 

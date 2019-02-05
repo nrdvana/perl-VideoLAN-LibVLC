@@ -9,7 +9,7 @@ use VideoLAN::LibVLC qw(
  PERLVLC_MSG_VIDEO_CLEANUP_EVENT
  PERLVLC_MSG_VIDEO_TRADE_PICTURE
  PERLVLC_PLANE_PITCH_MASK );
-use Socket qw( AF_UNIX SOCK_STREAM );
+use Socket qw( AF_UNIX SOCK_DGRAM );
 use Scalar::Util 'weaken';
 use IO::Handle;
 use Carp;
@@ -246,7 +246,7 @@ sub set_video_title_display {
 
 sub _vbuf_pipe {
 	$_[0]{_vbuf_pipe} //= do {
-		socketpair(my $r, my $w, AF_UNIX, SOCK_STREAM, 0)
+		socketpair(my $r, my $w, AF_UNIX, SOCK_DGRAM, 0)
 			or die "socketpair: $!";
 		$w->blocking(0);
 		# pass file handles to XS
@@ -399,8 +399,10 @@ C<libvlc_video_set_format> which forces VLC to rescale the pictures to your desi
 If called after registering a C<format> callback, it will reply to the callback with mostly
 the same effect (but after you've had the opportunity to see what the native format is).
 
-See L<VideoLAN::LibVLC::Picture> for discussion of the parameters (other than C<$alloc_count>,
-which is the number of pictures you plan to allocate).
+See L<VideoLAN::LibVLC::Picture> for discussion of the parameters other than C<$alloc_count>.
+C<alloc_count> is the number of pictures you plan to make available to the decoder at one time,
+and might be used by the decoder to decide whether to allocate its own temporary buffers if
+it can't get enough supplied by the application.
 
 If using the callback, this should only be called in response to the callback.  You should also
 set C<$alloc_count>, and C<$lines[0..2]> and C<$pitch[0..2]>.
@@ -418,23 +420,27 @@ sub set_video_format {
 	!$self->{video_format}
 		or croak "Video format already set";
 	if ($self->_video_callbacks->{format}) {
+		croak "Player is not ready for format information until after callback"
+			unless $self->_need_format_response;
+		$opts->{alloc_count} //= 1; # zero means failure
 		$self->_reply_video_format(@{$opts}{qw( chroma width height plane_pitch plane_lines alloc_count )});
 	}
 	else {
-		$opts->{plane_pitch} //= ( ($opts->{width} * 4 + 0x1F) & ~0x1F );
+		$opts->{plane_pitch} //= ( ($opts->{width} * 4 + PERLVLC_PLANE_PITCH_MASK) & ~PERLVLC_PLANE_PITCH_MASK );
 		$opts->{plane_pitch}= $opts->{plane_pitch}[0] if ref $opts->{plane_pitch};
-		$self->VideoLAN::LibVLC::libvlc_video_set_format(@{$opts}{qw( chroma width height plne_pitch )});
+		$self->VideoLAN::LibVLC::libvlc_video_set_format(@{$opts}{qw( chroma width height plane_pitch )});
 	}
 	$self->{video_format}{$_}= $opts->{$_} for qw( chroma width height plane_pitch plane_lines alloc_count );
 	1;
 }
 
 my %event_id_to_name= (
-	PERLVLC_MSG_VIDEO_LOCK_EVENT()    => 'lock',
-	PERLVLC_MSG_VIDEO_UNLOCK_EVENT()  => 'unlock',
-	PERLVLC_MSG_VIDEO_DISPLAY_EVENT() => 'display',
-	PERLVLC_MSG_VIDEO_FORMAT_EVENT()  => 'format',
-	PERLVLC_MSG_VIDEO_CLEANUP_EVENT() => 'cleanup',
+	PERLVLC_MSG_VIDEO_LOCK_EVENT   , 'lock',
+	PERLVLC_MSG_VIDEO_UNLOCK_EVENT , 'unlock',
+	PERLVLC_MSG_VIDEO_DISPLAY_EVENT, 'display',
+	PERLVLC_MSG_VIDEO_FORMAT_EVENT , 'format',
+	PERLVLC_MSG_VIDEO_CLEANUP_EVENT, 'cleanup',
+	PERLVLC_MSG_VIDEO_TRADE_PICTURE, 'return_pic',
 );
 
 sub _dispatch_callback {
@@ -450,9 +456,17 @@ sub _dispatch_callback {
 
 sub _dispatch_cb_format {
 	my ($self, $event, $cb, $opaque)= @_;
-	$cb? $cb->($opaque, $event)
-	# if there wasn't a callback, it should reply to the message
-	: $self->set_video_format($event);
+	# Format callback can happen multiple times.  Wipe any format settings from before.
+	delete $self->{video_format};
+	# Let XS know that it needs to block anything other than a reply to the format message
+	$self->_need_format_response(1);
+	if ($cb) { $cb->($opaque, $event) }
+	# If user didn't register a callback, reply to the message saying format is OK.
+	else {
+		$event->{alloc_count}= 8;
+		$self->set_video_format($event);
+		$self->push_new_picture(id => $_) for 1..8;
+	}
 }
 
 sub _dispatch_cb_lock {
@@ -477,6 +491,12 @@ sub _dispatch_cb_display {
 
 sub _dispatch_cb_cleanup {
 	my ($self, $event, $cb, $opaque)= @_;
+	$cb->($opaque, $event) if $cb;
+}
+
+sub _dispatch_cb_return_pic {
+	my ($self, $event, $cb, $opaque)= @_;
+	$self->remove_picture($event->{picture});
 	$cb->($opaque, $event) if $cb;
 }
 

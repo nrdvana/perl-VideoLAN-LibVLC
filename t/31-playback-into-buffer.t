@@ -20,7 +20,7 @@ sub test_custom_framesize {
 	1 while $vlc->callback_dispatch;
 
 	my $pic;
-	$player->trace_pictures(1);
+	$player->trace_pictures(1) if $ENV{DEBUG};
 	$player->set_video_callbacks(display => sub { $pic= $_[1]{picture}; $_[0]->push_picture($pic); });
 	$player->set_video_format(chroma => 'RGBA', width => 64, height => 64, plane_pitch => 64*4);
 	$player->push_new_picture(id => $_) for 0..7;
@@ -43,21 +43,20 @@ sub test_native_framesize {
 	my $player= new_ok( 'VideoLAN::LibVLC::MediaPlayer', [ libvlc => $vlc ], 'player instance' );
 	1 while $vlc->callback_dispatch;
 
-	$player->media(catdir($datadir, 'NASA-solar-flares-2017-04-02.mp4'));
-	1 while $vlc->callback_dispatch;
-
 	my ($pic, $ready, $done);
-	$player->trace_pictures(1);
+	$player->trace_pictures(1) if $ENV{DEBUG};
 	$player->set_video_callbacks(
 		display => sub { $pic= $_[1]{picture}; },
 		format => sub {
 			my ($p, $event)= @_;
-			diag explain $event;
+			diag explain $event if $ENV{DEBUG};
 			$p->set_video_format(%$event, alloc_count => 8);
 			$p->push_new_picture(id => $_) for 0..7;
 		},
 		cleanup => sub { $done++ },
 	);
+	$player->media(catdir($datadir, 'NASA-solar-flares-2017-04-02.mp4'));
+	1 while $vlc->callback_dispatch;
 	ok( $player->play, 'play' );
 	for (my $i= 0; !$pic && $i < 100; $i++) {
 		sleep .01;
