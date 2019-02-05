@@ -32,6 +32,7 @@ typedef struct PerlVLC_picture {
 	HV *self_hv;
 	int held_by_vlc;
 	unsigned width, height;
+	int trace_destruction;
 	void *plane[PERLVLC_PICTURE_PLANES];
 	SV *plane_buffer_sv[PERLVLC_PICTURE_PLANES];
 	unsigned pitch[PERLVLC_PICTURE_PLANES];

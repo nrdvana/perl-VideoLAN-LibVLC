@@ -164,6 +164,12 @@ sub new {
 	return $self;
 }
 
+sub DESTROY {
+	my $self= shift;
+	$self->{libvlc}->_unregister_callback($self->{_callback_id})
+		if $self->{libvlc} && $self->{_callback_id};
+}
+
 =head2 set_media
 
 Set the player's active media soruce.  May be an instance of
@@ -445,6 +451,8 @@ my %event_id_to_name= (
 
 sub _dispatch_callback {
 	my ($self, $event)= @_;
+	$event->{picture}= $self->_inflate_picture($event->{picture})
+		if $event->{picture};
 	my $opaque= $self->_video_callbacks->{opaque} || $self;
 	if (my $cbname= $event_id_to_name{$event->{event_id}}) {
 		$self->can('_dispatch_cb_'.$cbname)->($self, $event, $self->_video_callbacks->{$cbname}, $opaque);

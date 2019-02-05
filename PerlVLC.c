@@ -135,6 +135,7 @@ int PerlVLC_media_player_mg_free(pTHX_ SV *player_sv, MAGIC* mg) {
 	/* VLC shouldn't have any more picture objects at this point. */
 	for (i= 0; i < mpinfo->picture_count; i++) {
 		mpinfo->pictures[i]->held_by_vlc= 0;
+		mpinfo->pictures[i]->trace_destruction= mpinfo->trace_pictures;
 		sv_2mortal((SV*) mpinfo->pictures[i]->self_hv); // release our hidden reference to the perl objects
 	}
 	if (mpinfo->pictures) Safefree(mpinfo->pictures);
@@ -263,8 +264,10 @@ SV * PerlVLC_wrap_picture(PerlVLC_picture_t *pic) {
 		sv_bless(self, gv_stashpv("VideoLAN::LibVLC::Picture", GV_ADD));
 		/* after this, when the HV goes out of scope it calls the mg_free (our destructor) */
 		PerlVLC_set_picture_mg(self, pic);
+		PERLVLC_TRACE("added new SV (refcnt=%d) to new HV (refcnt=%d)", SvREFCNT(self), SvREFCNT((SV*)pic->self_hv));
 	} else {
 		self= newRV_inc((SV*) pic->self_hv);
+		PERLVLC_TRACE("added new SV (refcnt=%d) to existing HV (refcnt=%d)", SvREFCNT(self), SvREFCNT((SV*)pic->self_hv));
 	}
 	return self;
 }
@@ -287,6 +290,11 @@ void PerlVLC_picture_destroy(PerlVLC_picture_t *pic) {
 		warn("BUG: Picture object destroyed while VLC still has access to it!");
 	if (pic->self_hv)
 		croak("BUG: Picture object destroyed while Perl still has access to it!");
+	if (pic->trace_destruction)
+		PerlVLC_cb_log_error("picture %d: free [%p,%p,%p] or release ref [%p,%p,%p]",
+			pic->plane[0], pic->plane[1], pic->plane[2],
+			pic->plane_buffer_sv[0], pic->plane_buffer_sv[1], pic->plane_buffer_sv[2]);
+		
 	/* For each plane, the buffer either came from a perl scalar ref, or was allocated directly. */
 	for (i= 0; i < PERLVLC_PICTURE_PLANES; i++) {
 		if (pic->plane_buffer_sv[i])
@@ -339,7 +347,7 @@ typedef struct PerlVLC_Message_ImgFmt {
 	unsigned height;
 	unsigned plane_pitch[3];
 	unsigned plane_lines[3];
-	unsigned allocated;
+	unsigned alloc_count;
 } PerlVLC_Message_ImgFmt_t;
 
 SV* PerlVLC_inflate_message(void *buffer, int msglen) {
@@ -347,6 +355,7 @@ SV* PerlVLC_inflate_message(void *buffer, int msglen) {
 	AV *plane, *pitch, *lines;
 	char *pos, *lim;
 	int i;
+	SV *sv;
 	PerlVLC_Message_t *msg= (PerlVLC_Message_t*) buffer;
 	PerlVLC_Message_LogMsg_t *logmsg;
 	PerlVLC_Message_TradePicture_t *picmsg;
@@ -403,7 +412,7 @@ SV* PerlVLC_inflate_message(void *buffer, int msglen) {
 			if (picmsg->event_id == PERLVLC_MSG_VIDEO_DISPLAY_EVENT)
 				picmsg->picture->held_by_vlc= 0;
 			/* The picture knows its own HV, so create a new ref to that */
-			hv_stores(ret, "picture", newRV_inc((SV*) picmsg->picture->self_hv));
+			hv_stores(ret, "picture", newSVuv((intptr_t) picmsg->picture));
 		}
 		if (0) {
 	case PERLVLC_MSG_VIDEO_FORMAT_EVENT:
@@ -568,8 +577,6 @@ static void* PerlVLC_video_lock_cb(void *opaque, void **planes) {
 			for (i= 0; i < 3; i++)
 				planes[i]= picture->plane_buffer_sv[i]? SvPVX(picture->plane_buffer_sv[i])
 					: PERLVLC_ALIGN_PLANE(picture->plane[i]); // alignment to 32-bytes
-			if (!planes[1]) planes[1]= planes[0];
-			if (!planes[2]) planes[2]= planes[1];
 			if (mpinfo->trace_pictures)
 				PerlVLC_cb_log_error("video thread got picture %d (%p,%p,%p)", picture->id, planes[0], planes[1], planes[2]);
 			return picture;
@@ -650,8 +657,8 @@ static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigne
 		return 0;
 	}
 	if (mpinfo->trace_pictures)
-		PerlVLC_cb_log_error("format_cb: chroma=%2X%2X%2X%2X width=%d height=%d pitch=[%d,%d,%d] lines=[%d,%d,%d]",
-			chroma_p[0],chroma_p[1],chroma_p[2],chroma_p[3], *width_p, *height_p, pitch[0], pitch[1], pitch[2], lines[0], lines[1], lines[2]);
+		PerlVLC_cb_log_error("format_cb: vlc gave chroma=%.4s width=%d height=%d pitch=[%d,%d,%d] lines=[%d,%d,%d]",
+			chroma_p, *width_p, *height_p, pitch[0], pitch[1], pitch[2], lines[0], lines[1], lines[2]);
 	
 	/* Pack up arguments */
 	memset(&msg.fmt_msg, 0, sizeof(msg.fmt_msg));
@@ -684,6 +691,8 @@ static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigne
 		/* If the format callback happens mid-stream, there are probably other video
 		 * picture messages in the queue that need returned to the player. */
 		else if (got == sizeof(msg.pic_msg) && msg.msg.event_id == PERLVLC_MSG_VIDEO_TRADE_PICTURE) {
+			if (mpinfo->trace_pictures)
+				PerlVLC_cb_log_error("format_cb: returning picture %d unused", msg.pic_msg.picture->id);
 			msg.pic_msg.picture->held_by_vlc= 0;
 			if (send(mpinfo->event_pipe, &msg.pic_msg, sizeof(msg.pic_msg), 0) < sizeof(msg.pic_msg))
 				PerlVLC_cb_log_error("BUG: format_callback: Can't return picture to player");
@@ -703,8 +712,11 @@ static unsigned PerlVLC_video_format_cb(void **opaque_p, char *chroma_p, unsigne
 		pitch[i]= msg.fmt_msg.plane_pitch[i];
 		lines[i]= msg.fmt_msg.plane_lines[i];
 	}
+	if (mpinfo->trace_pictures)
+		PerlVLC_cb_log_error("format_cb: application gave chroma=%.4s width=%d height=%d pitch=[%d,%d,%d] lines=[%d,%d,%d] alloc_count=%d",
+			chroma_p, *width_p, *height_p, pitch[0], pitch[1], pitch[2], lines[0], lines[1], lines[2], msg.fmt_msg.alloc_count);
 	/* Return the number allocated */
-	return msg.fmt_msg.allocated;
+	return msg.fmt_msg.alloc_count;
 }
 
 static void PerlVLC_video_cleanup_cb(void *opaque) {
@@ -799,7 +811,7 @@ void PerlVLC_video_reply_format(
 				croak("lines[%d] must be a number", i);
 		}
 	}
-	msg.allocated= alloc_count;
+	msg.alloc_count= alloc_count;
 	msg.event_id= PERLVLC_MSG_VIDEO_FORMAT_EVENT;
 	wrote= send(player->vbuf_pipe[1], &msg, sizeof(msg), 0);
 	if (player->trace_pictures)
@@ -815,8 +827,10 @@ void PerlVLC_player_add_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic
 	void *larger;
 	int i;
 	PERLVLC_TRACE("PerlVLC_player_add_picture(%p, %p)", player, pic);
-	if (player->trace_pictures)
+	if (player->trace_pictures) {
 		PerlVLC_cb_log_error("add picture %d to player %p", pic->id, player);
+		pic->trace_destruction= player->trace_pictures;
+	}
 
 	if (!pic->self_hv) croak("BUG: picture lacks self_hv");
 	/* make sure it isn't already in the list */
@@ -837,6 +851,7 @@ void PerlVLC_player_add_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic
 	player->pictures[player->picture_count++]= pic;
 	/* maintain a refcnt on the HV */
 	SvREFCNT_inc(pic->self_hv);
+	PERLVLC_TRACE("added ref to picture %d HV (refcnt=%d)", pic->id, SvREFCNT(pic->self_hv));
 	if (player->vbuf_pipe[1] >= 0)
 		PerlVLC_player_fill_picture_queue(player);
 }
@@ -846,11 +861,14 @@ void PerlVLC_player_add_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic
  */
 void PerlVLC_player_remove_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic) {
 	int i;
-	if (player->trace_pictures)
+	if (player->trace_pictures) {
 		PerlVLC_cb_log_error("remove picture %d from player %p", pic->id, player);
+		pic->trace_destruction= 1;
+	}
 	for (i= 0; i < player->picture_count; i++)
 		if (player->pictures[i] == pic) {
 			sv_2mortal((SV*) pic->self_hv);
+			PERLVLC_TRACE("mortalized ref to pic %d HV (refcnt=%d)", pic->id, SvREFCNT((SV*)pic->self_hv));
 			player->pictures[i]= player->pictures[--player->picture_count];
 			return;
 		}

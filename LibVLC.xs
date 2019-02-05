@@ -112,7 +112,7 @@ _recv_event(vlc)
 		RETVAL
 
 SV *
-_inflate_event(vlc, buffer)
+_inflate_message(vlc, buffer)
 	PerlVLC_vlc_t *vlc
 	SV *buffer;
 	INIT:
@@ -202,17 +202,13 @@ libvlc_media_parse_with_options(media, parse_flag, timeout)
 
 #endif
 
-void
+libvlc_media_player_t*
 libvlc_media_player_new(vlc)
 	libvlc_instance_t *vlc
-	PPCODE:
-		PUSHs( PerlVLC_wrap_media_player(libvlc_media_player_new(vlc)) );
 
-void
+libvlc_media_player_t*
 libvlc_media_player_new_from_media(media)
 	libvlc_media_t *media
-	PPCODE:
-		PUSHs( PerlVLC_wrap_media_player(libvlc_media_player_new_from_media(media)) );
 
 void
 libvlc_media_player_set_media(player, media)
@@ -484,6 +480,24 @@ push_picture(player, pic)
 	PerlVLC_picture_t *pic
 	PPCODE:
 		PerlVLC_player_add_picture(player, pic);
+
+PerlVLC_picture_t *
+_inflate_picture(player, pic_address)
+	PerlVLC_player_t *player
+	IV pic_address
+	INIT:
+		int i;
+	CODE:
+		RETVAL= NULL;
+		for (i= 0; i < player->picture_count; i++)
+			if (((intptr_t) player->pictures[i]) == pic_address) {
+				RETVAL= player->pictures[i];
+				break;
+			}
+		if (!RETVAL)
+			croak("Picture does not belong to this player");
+	OUTPUT:
+		RETVAL
 
 int
 fill_queue(player)
