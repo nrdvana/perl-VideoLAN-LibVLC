@@ -320,16 +320,16 @@ the planes as scalar-refs, but this is likely to crash your program if you're no
 and should only be done if you have special requirements like rendering into a memory-map
 (such as created by L<File::Map> or L<OpenGL::Sandbox::Buffer>).
 
-After creating a picture buffer, pass it to L<push_picture>.  This gives the internal VLC
+After creating a picture buffer, pass it to L<queue_picture>.  This gives the internal VLC
 thread access to them.
 
-  $p->push_new_picture(id => $_) for 0..7;
+  $p->queue_new_picture(id => $_) for 0..7;
   
   # which is shorthand for:
   
   for (0..7) {
     my $pic= VideoLAN::LibVLC::Picture->new( $p->video_format->%*, id => $_ );
-    $p->push_picture($pic);
+    $p->queue_picture($pic);
   }
 
 Picture IDs aren't required but it helps when debugging with L</trace_pictures>.
@@ -348,7 +348,7 @@ the video codec, the images might be created in a different order than they get 
 
 The most important callback is the C<display> callback.  This tells you when it is time to show
 a picture.  This event is also the moment that a C<Picture> object becomes detached from the
-C<MediaPlayer> object.  You need to call L</push_picture> again afterward if you want to
+C<MediaPlayer> object.  You need to call L</queue_picture> again afterward if you want to
 recycle the picture.
 
 =item Handle the Cleanup event
@@ -398,7 +398,7 @@ sub set_video_callbacks {
 =head2 set_video_format
 
   $p->set_video_format(%opts); # must include: chroma width height
-                               # may include: plane_pitch plane_lines alloc_count
+                               # may include: pitch lines alloc_count
 
 If this is called without registering a C<format> callback, it will call
 C<libvlc_video_set_format> which forces VLC to rescale the pictures to your desired format.
@@ -425,18 +425,15 @@ sub set_video_format {
 		for qw( chroma width height );
 	!$self->{video_format}
 		or croak "Video format already set";
+	(ref $opts->{pitch}? $opts->{pitch}[0] : $opts->{pitch}) ||= ( ($opts->{width} * 4 + PERLVLC_PLANE_PITCH_MASK) & ~PERLVLC_PLANE_PITCH_MASK );
+	(ref $opts->{lines}? $opts->{lines}[0] : $opts->{lines}) ||= $opts->{height};
 	if ($self->_video_callbacks->{format}) {
 		croak "Player is not ready for format information until after callback"
 			unless $self->_need_format_response;
 		$opts->{alloc_count} //= 1; # zero means failure
-		$self->_reply_video_format(@{$opts}{qw( chroma width height plane_pitch plane_lines alloc_count )});
 	}
-	else {
-		$opts->{plane_pitch} //= ( ($opts->{width} * 4 + PERLVLC_PLANE_PITCH_MASK) & ~PERLVLC_PLANE_PITCH_MASK );
-		$opts->{plane_pitch}= $opts->{plane_pitch}[0] if ref $opts->{plane_pitch};
-		$self->VideoLAN::LibVLC::libvlc_video_set_format(@{$opts}{qw( chroma width height plane_pitch )});
-	}
-	$self->{video_format}{$_}= $opts->{$_} for qw( chroma width height plane_pitch plane_lines alloc_count );
+	$self->_set_video_format($opts);
+	$self->{video_format}{$_}= $opts->{$_} for qw( chroma width height pitch lines alloc_count );
 	1;
 }
 
@@ -451,8 +448,6 @@ my %event_id_to_name= (
 
 sub _dispatch_callback {
 	my ($self, $event)= @_;
-	$event->{picture}= $self->_inflate_picture($event->{picture})
-		if $event->{picture};
 	my $opaque= $self->_video_callbacks->{opaque} || $self;
 	if (my $cbname= $event_id_to_name{$event->{event_id}}) {
 		$self->can('_dispatch_cb_'.$cbname)->($self, $event, $self->_video_callbacks->{$cbname}, $opaque);
@@ -473,7 +468,7 @@ sub _dispatch_cb_format {
 	else {
 		$event->{alloc_count}= 8;
 		$self->set_video_format($event);
-		$self->push_new_picture(id => $_) for 1..8;
+		$self->queue_new_picture(id => $_) for 1..8;
 	}
 }
 
@@ -481,19 +476,20 @@ sub _dispatch_cb_lock {
 	my ($self, $event, $cb, $opaque)= @_;
 	$cb->($opaque, $event) if $cb;
 	# check how many are queued for decoder thread
-	my $queued= $self->fill_queue;
-	carp "Only $queued pictures available to VLC" if $queued < 3;
+	#carp "Only $queued pictures available to VLC"
+	#	if $self->queued_picture_count < 3; # most MPEG decoders prob need 3 at least
 }
 
 sub _dispatch_cb_unlock {
 	my ($self, $event, $cb, $opaque)= @_;
+	$event->{picture}= $self->_inflate_picture($event->{picture});
 	$cb->($opaque, $event) if $cb;
 }
 
 sub _dispatch_cb_display {
 	my ($self, $event, $cb, $opaque)= @_;
-	# 'display' callback needs to detch the picture object from the player
-	$self->remove_picture($event->{picture});
+	# 'display' callback needs to detach the picture object from the player
+	$event->{picture}= $self->_dequeue_picture($event->{picture});
 	$cb->($opaque, $event) if $cb;
 }
 
@@ -504,7 +500,7 @@ sub _dispatch_cb_cleanup {
 
 sub _dispatch_cb_return_pic {
 	my ($self, $event, $cb, $opaque)= @_;
-	$self->remove_picture($event->{picture});
+	$event->{picture}= $self->dequeue_picture(undef, $event->{picture});
 	$cb->($opaque, $event) if $cb;
 }
 
@@ -516,15 +512,15 @@ Retun a new L<VideoLAN::LibVLC::Picture> object, defaulting to the format last r
 L</set_video_format>.  Any arguments to this function will be merged with those format
 parameters.
 
-=head2 push_picture
+=head2 queue_picture
 
-  $player->push_picture($picture);
+  $player->queue_picture($picture);
 
 Push a picture onto the queue to the VLC decoding thread.  Once pushed, you may not alter the
 picture in any way, or else risk crashing your program.  It is best to drop any reference you
 had to the picture and let the Player hold onto it until time for a C<display> event.
 
-=head2 push_new_picture
+=head2 queue_new_picture
 
 A shorthand combination of the above methods.
 
@@ -546,9 +542,9 @@ sub new_picture {
 	VideoLAN::LibVLC::Picture->new($fmt);
 }
 
-sub push_new_picture {
+sub queue_new_picture {
 	my $self= shift;
-	$self->push_picture($self->new_picture(@_));
+	$self->queue_picture($self->new_picture(@_));
 }
 
 1;

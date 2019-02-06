@@ -427,17 +427,29 @@ _enable_video_callbacks(player, event_fd, cb_id, which_list)
 		PerlVLC_enable_video_callbacks(player, which);
 
 void
-_reply_video_format(player, chroma, width, height, pitch, lines, alloc_count= 0)
+_set_video_format(player, format_hv)
 	PerlVLC_player_t *player
-	char *chroma
-	int width
-	int height
-	SV *pitch
-	SV *lines
-	int alloc_count
+	HV *format_hv
+	INIT:
+		PerlVLC_picture_format_t format;
+		SV **item;
 	PPCODE:
-		PerlVLC_video_reply_format(player, chroma, width, height, pitch, lines, alloc_count);
-		player->need_format_response= 0;
+		memset(&format, 0, sizeof(format));
+		PerlVLC_picture_format_init_from_hv(&format, format_hv);
+		if (!format.lines[0]) croak("lines[0] must be set");
+		if (!format.pitch[0]) croak("pitch[0] must be set");
+		if (player->need_format_response) {
+			if (!(item= hv_fetchs(format_hv, "alloc_count", 0)) || !*item || !SvOK(*item))
+				croak("alloc_count is required when replying to callback");
+			PerlVLC_video_reply_format(player, &format, SvIV(*item));
+			player->need_format_response= 0;
+		}
+		else {
+			warn("Setting libvlc_video_set_format(%p, %.4s, %d, %d, %d)",
+				player->player, format.chroma, format.width, format.height, format.pitch[0]);
+			libvlc_video_set_format(player->player, format.chroma, format.width, format.height, format.pitch[0]);
+		}
+		memcpy(&player->current_format, &format, sizeof(format));
 
 int
 _need_format_response(player, assign=NULL)
@@ -450,48 +462,49 @@ _need_format_response(player, assign=NULL)
 	OUTPUT:
 		RETVAL
 
-PerlVLC_picture_t *
-remove_picture(player, pic)
-	PerlVLC_player_t *player
-	PerlVLC_picture_t *pic
-	INIT:
-		int i;
-	CODE:
-		RETVAL= NULL;
-		if (pic) {
-			if (pic->held_by_vlc)
-				croak("Picture is held by VLC decoder thread");
-			/* search for any picture that is not already pushed into the VLC queue */
-			for (i= 0; i < player->picture_count; i++)
-				if (player->pictures[i] == pic) {
-					RETVAL= pic;
-					PerlVLC_player_remove_picture(player, RETVAL);
-					break;
-				}
-			if (!RETVAL)
-				croak("Picture does not belong to this player");
-		}
-	OUTPUT:
-		RETVAL
-
 void
-push_picture(player, pic)
+queue_picture(player, pic)
 	PerlVLC_player_t *player
 	PerlVLC_picture_t *pic
 	PPCODE:
+		if (player->need_format_response)
+			croak("Can't queue pictures until format response is sent");
+		PerlVLC_player_send_picture(player, pic);
 		PerlVLC_player_add_picture(player, pic);
+
+PerlVLC_picture_t *
+_dequeue_picture(player, pic_address)
+	PerlVLC_player_t *player
+	IV pic_address;
+	INIT:
+		PerlVLC_picture_t *pic;
+		int i;
+	CODE:
+		RETVAL= NULL;
+		for (i= 0; i < player->picture_count; i++)
+			if (((intptr_t)player->pictures[i]) == pic_address) {
+				RETVAL= (PerlVLC_picture_t*) pic_address;
+				break;
+			}
+		if (!RETVAL)
+			croak("Picture does not belong to this player");
+		pic= (PerlVLC_picture_t*) pic_address;
+		PerlVLC_player_remove_picture(player, pic);
+		pic->held_by_vlc= 0;
+	OUTPUT:
+		RETVAL
 
 PerlVLC_picture_t *
 _inflate_picture(player, pic_address)
 	PerlVLC_player_t *player
-	IV pic_address
+	IV pic_address;
 	INIT:
 		int i;
 	CODE:
 		RETVAL= NULL;
 		for (i= 0; i < player->picture_count; i++)
-			if (((intptr_t) player->pictures[i]) == pic_address) {
-				RETVAL= player->pictures[i];
+			if (((intptr_t)player->pictures[i]) == pic_address) {
+				RETVAL= (PerlVLC_picture_t*) pic_address;
 				break;
 			}
 		if (!RETVAL)
@@ -500,10 +513,10 @@ _inflate_picture(player, pic_address)
 		RETVAL
 
 int
-fill_queue(player)
+queued_picture_count(player)
 	PerlVLC_player_t *player
 	CODE:
-		RETVAL= PerlVLC_player_fill_picture_queue(player);
+		RETVAL= player->picture_count;
 	OUTPUT:
 		RETVAL
 
@@ -542,7 +555,7 @@ SV *
 chroma(pic)
 	PerlVLC_picture_t *pic;
 	CODE:
-		RETVAL= newSVpvn(pic->chroma, 4);
+		RETVAL= newSVpvn(pic->format.chroma, 4);
 	OUTPUT:
 		RETVAL
 
@@ -550,7 +563,7 @@ int
 width(pic)
 	PerlVLC_picture_t *pic;
 	CODE:
-		RETVAL= pic->width;
+		RETVAL= pic->format.width;
 	OUTPUT:
 		RETVAL
 
@@ -558,7 +571,7 @@ int
 height(pic)
 	PerlVLC_picture_t *pic;
 	CODE:
-		RETVAL= pic->height;
+		RETVAL= pic->format.height;
 	OUTPUT:
 		RETVAL
 
@@ -572,29 +585,29 @@ plane(pic, idx)
 		RETVAL= (idx < 0 || idx > 3)? &PL_sv_undef
 			: pic->plane_buffer_sv[idx]? newSVsv(pic->plane_buffer_sv[idx])
 			: pic->plane[idx]? newRV_noinc(buffer_scalar_wrap(newSV(0),
-					(void*) ((((intptr_t)pic->plane[idx])+0x1F) & ~0x1F),
-					pic->pitch[idx] * pic->lines[idx], 0, NULL, NULL))
+					PERLVLC_ALIGN_PLANE(pic->plane[idx]),
+					pic->format.pitch[idx] * pic->format.lines[idx], 0, NULL, NULL))
 			: &PL_sv_undef;
 	OUTPUT:
 		RETVAL
 
 SV *
-plane_pitch(pic, idx)
+pitch(pic, idx)
 	PerlVLC_picture_t *pic;
 	int idx;
 	CODE:
-		RETVAL= (idx < 0 || idx > 3 || !(pic->pitch[idx] || pic->plane_buffer_sv[idx]))? &PL_sv_undef
-			: newSViv(pic->pitch[idx]);
+		RETVAL= (idx < 0 || idx > 3 || !(pic->format.pitch[idx] || pic->plane_buffer_sv[idx]))? &PL_sv_undef
+			: newSViv(pic->format.pitch[idx]);
 	OUTPUT:
 		RETVAL
 
 SV *
-plane_lines(pic, idx)
+lines(pic, idx)
 	PerlVLC_picture_t *pic;
 	int idx;
 	CODE:
-		RETVAL= (idx < 0 || idx > 3 || !(pic->lines[idx] || pic->plane_buffer_sv[idx]))? &PL_sv_undef
-			: newSViv(pic->lines[idx]);
+		RETVAL= (idx < 0 || idx > 3 || !(pic->format.lines[idx] || pic->plane_buffer_sv[idx]))? &PL_sv_undef
+			: newSViv(pic->format.lines[idx]);
 	OUTPUT:
 		RETVAL
 

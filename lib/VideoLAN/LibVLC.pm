@@ -252,8 +252,8 @@ Whether or not this version of libvlc supports redirecting the log.
   $vlc->log( $log, \%options );
   
   # set to logging callback
-  $vlc->log( sub { my ($level, $message, %attributes)= @_; ... } );
-  $vlc->log( sub { my ($level, $message, %attributes)= @_; ... }, \%options );
+  $vlc->log( sub { my ($event)= @_; ... } );
+  $vlc->log( sub { my ($event)= @_; ... }, \%options );
   
   # disable logging
   $vlc->log(undef);

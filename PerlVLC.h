@@ -42,13 +42,21 @@ extern MGVTBL PerlVLC_picture_mg_vtbl;
 extern void* PerlVLC_get_mg(SV *obj, MGVTBL *mg_vtbl);
 
 #define PERLVLC_PICTURE_PLANES 3
+typedef struct PerlVLC_picture_format {
+	char chroma[4];                         // four CC code of image format used by VLC
+	unsigned width, height;                 // in pixels
+	unsigned lines[PERLVLC_PICTURE_PLANES]; // number of rows of pixel data per plane
+	unsigned pitch[PERLVLC_PICTURE_PLANES]; // distance in bytes from one line to the next
+} PerlVLC_picture_format_t;
+
+extern void PerlVLC_picture_format_init_from_hv(PerlVLC_picture_format_t *format, HV *hv);
+
 typedef struct PerlVLC_picture {
 	int id;                 // user-supplied ID to help track picture
-	char chroma[4];         // four CC code of image format used by VLC
 	HV *self_hv;            // Picture objects are paired with an HV
 	int held_by_vlc;        // whether this picture has been assigned to VLC
-	unsigned width, height; // in pixels
 	int trace_destruction;  // whether to log the destruction of this object
+	PerlVLC_picture_format_t format; // to identify layout of picture
 	
 	// Plane data is either a scalar-ref, or a directly allocated buffer.  The scalar-refs are
 	// hopefully aligned, but we don't adjust the pointers.  The plane[] pointers are direct
@@ -57,8 +65,6 @@ typedef struct PerlVLC_picture {
 	// likewise, pitch and lines for unused planes can be 0.
 	void *plane[PERLVLC_PICTURE_PLANES];
 	SV *plane_buffer_sv[PERLVLC_PICTURE_PLANES];
-	unsigned pitch[PERLVLC_PICTURE_PLANES];
-	unsigned lines[PERLVLC_PICTURE_PLANES];
 } PerlVLC_picture_t;
 
 /* Picture planes are most efficient when aligned.  VLC docs recommend 32 bytes,
@@ -91,9 +97,10 @@ typedef struct PerlVLC_player {
 	int callback_id;     // id marking this object's events among others on the event_pipe
 	int vbuf_pipe[2];    // read,write handle of socket from this object to video thread
 	int need_format_response; // whether the format_cb is waiting for a response
+	PerlVLC_picture_format_t current_format; // current format needed by vlc decoder
 	// array that keeps track of which pictures have been sent to VLC.
-	PerlVLC_picture_t **vlc_pictures;
-	int vlc_pictures_alloc, vlc_pictures_count;
+	PerlVLC_picture_t **pictures;
+	int picture_alloc, picture_count;
 } PerlVLC_player_t;
 
 /* Constructor/destructor of player.  The player struct is magically attached to a blessed
@@ -114,9 +121,10 @@ extern SV * PerlVLC_wrap_media_player(libvlc_media_player_t *player);
 #define PERLVLC_VIDEO_CALLBACK_FORMAT   8
 #define PERLVLC_VIDEO_CALLBACK_CLEANUP 16
 extern void PerlVLC_enable_video_callbacks(PerlVLC_player_t *mpinfo, int which);
-extern void PerlVLC_player_add_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic);
-extern void PerlVLC_player_remove_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic);
-extern void PerlVLC_video_reply_format(PerlVLC_player_t *player, char *chroma, int width, int height, SV *pitch, SV *lines, int alloc_count);
+extern int  PerlVLC_player_add_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic);
+extern int  PerlVLC_player_remove_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic);
+extern void PerlVLC_video_reply_format(PerlVLC_player_t *player, PerlVLC_picture_format_t *format, int alloc_count);
+extern void PerlVLC_player_send_picture(PerlVLC_player_t *player, PerlVLC_picture_t *pic);
 
 /* VLC media objects aremagically attached directly to blessed hashrefs.
  * I didn't have enough reason to give them a wrapper struct, yet.
