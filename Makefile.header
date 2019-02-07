@@ -12,7 +12,7 @@ BEGIN {
 	unless (eval $use_prereqs_code) {
 		warn "$@\n";
 		WriteMakefile(
-				NAME         => 'X11::Xlib',
+				NAME         => 'VideoLAN::LibVLC',
 				PREREQ_FATAL => 1,
 				PREREQ_PM    => \%PREREQ_PM,
 		);
