@@ -67,7 +67,8 @@ sub media { my $self= shift; $self->set_media(@_) if @_; $self->{media} }
 
 =head2 rate
 
-The requested playback rate (multiple or fraction of real-time)
+The requested playback rate. (multiple or fraction of real-time)
+
 Writing this attribute calls L</set_rate>.
 
 =head2 length
@@ -80,7 +81,7 @@ Number if subtitle tracks in the media, or undef.
 
 =head2 title
 
-Number of the subtitle track currently playing, or undef
+Number of the subtitle track currently playing, or undef.
 
 "title" is the official language of libvlc, but "subtitle" is what English
 speakers probably expect to find.  I decided to stick with the API's
@@ -289,7 +290,7 @@ If you are using an event library like AnyEvent, it can simply be
 
 =item Choose Video Format
 
-Decide whether you want to force a specific video format, or use to the native format of
+Decide whether you want to force a specific video format, or use the native format of
 the media, or a little of both.  Using the native format of the media requires VLC 2.0 or
 higher.
 
