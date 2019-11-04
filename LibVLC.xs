@@ -3,7 +3,6 @@
 #include "perl.h"
 #include "XSUB.h"
 
-#include "ppport.h"
 
 #include <vlc/vlc.h>
 #include <vlc/libvlc_version.h>
