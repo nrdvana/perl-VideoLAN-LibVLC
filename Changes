@@ -1,3 +1,7 @@
+Version 0.05 - 2019-11-05
+  - Fixed several mistakes in logging callback API and implementation,
+    and more documentation fixes.
+
 Version 0.04 - 2019-11-05
   - Fixed compatibility with threaded perl
   - Improved some race conditions in test cases that failed occasionally
