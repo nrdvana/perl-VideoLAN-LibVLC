@@ -20,7 +20,7 @@ use Log::Any::Adapter Daemontools => -init => { env => 1 };
 # Also route libvlc logging into Log::Any.
 
 my $vlc= VideoLAN::LibVLC->new;
-$vlc->log(sub { $log->info($_[0]{message}) });
+$vlc->log($log);
 my $listen_vlc= AE::io $vlc->callback_fh, 0, sub { $vlc->callback_dispatch };
 
 # This sets up a Player object where

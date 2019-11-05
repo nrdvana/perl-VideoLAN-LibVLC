@@ -275,13 +275,20 @@ Whether or not this version of libvlc supports redirecting the log.
 
 Set the logger object or logging callback or logging file handle for this LibVLC
 instance.  It can be either a logger object like L<Log::Any>, or a callback.
+The C<$event> passed to the callback is a hashref containing C<message>, C<level>,
+and possibly other fields if requested by C<< $options{fields} >>.
 
-The optional second argumnt \%options can request more or less information for
-the callback.  Available options are:
+The optional second argument C<\%options> can request more or less information about the
+log message.  Available options are:
 
-  level   - one of LIBVLC_DEBUG LIBVLC_NOTICE LIBVLC_WARNING LIBVLC_ERROR
-  context - boolean of whether to collect the attributes "module", "file", and "line".
-  object  - boolean of whether to collect the attributes "name", "header", "id".
+  level  => one of LOG_LEVEL_DEBUG LOG_LEVEL_NOTICE LOG_LEVEL_WARNING LOG_LEVEL_ERROR
+  fields => arrayref set of [ "module", "file", "line", "name", "header", "objid" ]
+            or '*' to select all of them.  Each selected field will appear in the
+            log $event.
+
+for example,
+
+  $vlc->log($log, { level => LOG_LEVEL_WARNING, fields => [qw( file line )] });
 
 Note that logging can happen from other threads, so you won't see the messages until
 you call L</callback_dispatch>.
@@ -314,8 +321,10 @@ sub _set_logger {
 		# if target is a logger
 		elsif (ref($target)->can('info')) {
 			$self->{log}= sub {
-				my ($level, $msg, $attr)= @_;
-				$msg= join(' ', $msg, map { "$_=$attr->{$_}" } keys %$attr);
+				my $event= shift;
+				my $level= $event->{level};
+				my $msg= join ' ', $event->{message}, map "$_=$event->{$_}",
+					grep defined $event->{$_}, qw( name header id module file line );
 				if ($level == LOG_LEVEL_DEBUG()) { $target->debug($msg); }
 				elsif ($level == LOG_LEVEL_NOTICE()) { $target->notice($msg); }
 				elsif ($level == LOG_LEVEL_WARNING()) { $target->warn($msg); }
@@ -331,7 +340,7 @@ sub _set_logger {
 		# Install callback
 		weaken($self);
 		my $cb_id= $self->_register_callback(sub { $self->log->($_[0]) } );
-		$self->_libvlc_log_set($cb_id, $lev, $options->{fields} || ['*']);
+		$self->_libvlc_log_set($cb_id, $lev, $options->{fields} || []);
 	}
 }
 

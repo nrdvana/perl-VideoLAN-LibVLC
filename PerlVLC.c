@@ -367,6 +367,7 @@ typedef struct PerlVLC_Message {
 
 typedef struct PerlVLC_Message_LogMsg {
 	PERLVLC_MSG_HEADER
+	uint32_t level;
 	uint32_t line;
 	uint32_t objid;
 	uint8_t module_strlen;
@@ -408,6 +409,7 @@ SV* PerlVLC_inflate_message(void *buffer, int msglen) {
 			logmsg= (PerlVLC_Message_LogMsg_t *) msg;
 			pos= logmsg->stringdata;
 			lim= ((char*)buffer) + msglen;
+			hv_stores(ret, "level", newSViv(logmsg->level));
 			if (logmsg->line)
 				hv_stores(ret, "line", newSViv(logmsg->line));
 			if (logmsg->objid)
@@ -510,6 +512,7 @@ void PerlVLC_log_cb(void *opaque, int level, const libvlc_log_t *ctx, const char
 	
 	if (vlc->log_level > level) return;
 	memset(msg, 0, sizeof(*msg));
+	msg->level= level;
 	pos= msg->stringdata;
 	lim= buffer + sizeof(buffer);
 	if (vlc->log_module || vlc->log_file || vlc->log_line) {
