@@ -1,12 +1,13 @@
 FROM ubuntu:disco
 
 RUN apt-get update
-RUN apt-get install -y \
+RUN apt install -y \
     cpanminus \
     make \
     git \
     runit \
     strace \
+    vlc \
     libvlc-dev \
     libdist-zilla-perl \
     libdist-zilla-plugin-git-perl \
@@ -15,9 +16,9 @@ RUN apt-get install -y \
     libdist-zilla-plugin-podweaver-perl \
     libextutils-pkgconfig-perl \
     libextutils-depends-perl \
+    liblog-any-adapter-tap-perl \
+    libtest-pod-perl \
  && apt-get clean
 
 RUN cpanm \
-    Exporter::Extensible \
-    Log::Any \
-    Log::Any::Adapter::TAP
+    Exporter::Extensible
