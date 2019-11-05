@@ -27,7 +27,7 @@ use IO::Handle;
       $player->queue_new_picture(id => ++$next_pic_id)
         while $player->queued_picture_count < 8
     },
-	# callback when it is time to display a filled picture buffer
+    # callback when it is time to display a filled picture buffer
     display => sub ($player, $event) {
       do_stuff( $event->{picture} );  # do something with the picture
       $player->queue_picture($event->{picture});  # recycle the buffer
@@ -385,7 +385,7 @@ streams.  VLC can open paths, URIs, or file handles, and if you only
 pass one argument to this method it attempts to decide which of those
 three you intended.
 
-You an instead pass a hash or hashref, and then it just passes them
+You can instead pass a hash or hashref, and then it just passes them
 along to the Media constructor.
 
 =cut
@@ -408,6 +408,8 @@ sub new_media {
 
   my $player= $vlc->new_media_player();
 
+Creates a new L<VideoLAN::LibVLC::MediaPlayer>
+
 =cut
 
 sub new_media_player {
@@ -421,8 +423,9 @@ sub new_media_player {
 
 =head2 callback_fh
 
-The file handle of the read-end of the callback pipe.  Listen on this file handle
-to know when to call L</callback_dispatch>.
+The file handle of the read-end of the callback pipe.  Watch the readable status of
+this file handle to know when to call L</callback_dispatch>.  DO NOT READ OR WRITE
+IT FOR ANY REASON, lest ye incur the Wrath of the Segfault.
 
 =head2 callback_dispatch
 
@@ -437,6 +440,14 @@ file handle L</callback_fh> to become readable to know when to call this method.
   my $vlc= VideoLAN::LibVLC->new;
   my $watcher= AE::io $vlc->callback_fh, 0, sub { $vlc->callback_dispatch };  
 
+=item IO::Async example:
+
+  my $vlc= VideoLAN::LibVLC->new;
+  $loop->add( IO::Async::Handle->new(
+    handle => $vlc->callback_fh,
+    on_read_ready => sub { $vlc->callback_dispatch },
+  ));
+
 =item Manual event loop example:
 
   my $vlc= VideoLAN::LibVLC->new;
@@ -449,8 +460,7 @@ file handle L</callback_fh> to become readable to know when to call this method.
 =back
 
 The "wire format" used to stream the callbacks is deliberately hidden within
-this module, and might change drastically in future versions.  It also uses
-raw C-level pointers, so isn't safe for perl to tinker with anyway.
+this module.  It does not contain any user-servicable parts.
 
 =cut
 
@@ -502,14 +512,14 @@ sub _unregister_callback {
 
   libvlc_video_set_callbacks($player, $lock_cb, $unlock_cb, $display_cb, $opaque);
 
-This is part of the LibVLC API, but you should use L<VideoLAN::LibVLC::Player/set_video_callbacks>
+This is part of the LibVLC API, but you should use L<VideoLAN::LibVLC::MediaPlayer/set_video_callbacks>
 instead.
 
 =head2 libvlc_video_set_format_callbacks
 
   libvlc_video_set_format_callbacks($player, $format_cb, $cleanup_cb);
 
-This is part of the LibVLC API, but you should use L<VideoLAN::LibVLC::Player/set_video_callbacks>
+This is part of the LibVLC API, but you should use L<VideoLAN::LibVLC::MediaPlayer/set_video_callbacks>
 instead.
 
 =cut
