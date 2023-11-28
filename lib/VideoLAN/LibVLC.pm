@@ -1,5 +1,5 @@
 package VideoLAN::LibVLC;
-use 5.008001;
+use v5.10;
 use strict;
 use warnings;
 use Carp;
